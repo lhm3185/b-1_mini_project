@@ -67,15 +67,16 @@ class RcCarFollower:
     def on_stop(self, request, response):
         """사용자가 중단을 요청했다. 기한을 지금으로 당겨 복귀·dock 하게 한다."""
         self.deadline = 0.0
+        self.beep(1320, 880)
         response.success = True
         response.message = '추종을 끝내고 dock 으로 돌아간다'
         self.nav.info('중단 요청 수신')
         return response
 
-    def beep(self):
+    def beep(self, *frequencies):
         note = Duration(nanosec=200_000_000)
-        self.audio_pub.publish(AudioNoteVector(notes=[
-            AudioNote(frequency=880, max_runtime=note), AudioNote(frequency=1320, max_runtime=note)]))
+        self.audio_pub.publish(AudioNoteVector(
+            notes=[AudioNote(frequency=f, max_runtime=note) for f in frequencies]))
 
     def on_target(self, msg):
         self.target = msg
@@ -131,7 +132,7 @@ class RcCarFollower:
         while rclpy.ok() and not self.start_requested:
             rclpy.spin_once(self.nav, timeout_sec=0.05)
         self.deadline = time.monotonic() + self.follow_sec
-        self.beep()
+        self.beep(880, 1320)
 
         self.set_state(AmrState.MOVING)
         self.nav.undock()

@@ -61,6 +61,6 @@ ros2 run vision_pkg webcam_node
 ros2 topic echo /robot4/rc_car_target
 ros2 run rqt_image_view rqt_image_view /robot4/rc_car_debug/compressed   # 박스와 거리가 그려진 영상
 ros2 service call /robot4/rc_car_detected interface_pkg/srv/WebcamDetection "{detected: true}"   # 웹캠 없이 출발시키기
-ros2 service call /robot4/stop_follow std_srvs/srv/Trigger   # 추종을 끝내고 dock 으로 복귀시키기
+ros2 service call /robot4/stop_follow std_srvs/srv/Trigger   # 종료 알림음을 내고 추종을 끝내 dock 으로 복귀시키기
 ```
 
