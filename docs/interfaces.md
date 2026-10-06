@@ -1,4 +1,4 @@
-# 인터페이스 정의 (초안 v0.5, 2026-10-06)
+# 인터페이스 정의 (초안 v0.6, 2026-10-06)
 
 `vision_pkg` 와 `navi_pkg` 가 주고받는 토픽 약속이다. 메시지 타입은 `interface_pkg/msg/` 에 있다.
 강의 코드(`to_students` day2·day3)의 방식에 맞췄다. 바꿀 것이 있으면 이 문서를 먼저 고치고 알린다.
@@ -67,10 +67,13 @@ self.state_pub.publish(AmrState(state=AmrState.SCANNING))
 | `distance` | RC카까지의 **전방 거리** (m) |
 | `offset` | 좌우 치우침 (m). 왼쪽이 +, 오른쪽이 − |
 
+- 두 값 모두 **로봇 중심(`base_link`) 기준**이다. 범퍼에서 잰 거리는 로봇 반지름(약 0.17 m)만큼 더 짧다. 유지 거리를 정할 때 이 기준으로 맞춘다.
+
 - 추종은 이 두 값으로 된다: `distance − 유지 거리` 가 0 이 되게 전진·후진하고, `atan2(offset, distance)` 가 0 이 되게 회전한다. RC카가 멈추면 `distance` 가 유지 거리에 머물러 AMR 도 멈춘다. 거리 조절과 회전은 `navi_pkg` 가 한다.
 - 만드는 방법은 강의 코드 `day3/3_3_d_depth_to_nav_goal_ts.py` 와 같다(픽셀 + 깊이 → 카메라 좌표 → TF 변환). 변환 대상만 `map` 대신 `base_link` 다.
 - `header.stamp` 는 그 영상이 찍힌 시각이다.
 - **메시지가 오지 않으면 "못 찾음" 이다.** `navi_pkg` 는 마지막 수신 뒤 **1.0 초**가 지나면 놓친 것으로 본다. 이 값으로 시작해 시험하면서 고친다.
+- **1.0 초는 `navi_pkg` 가 메시지를 받은 시각으로 잰다.** `header.stamp` 와 현재 시각을 비교하지 않는다. `header.stamp` 는 로봇 시계, `navi_pkg` 는 PC 시계라 서로 어긋날 수 있다.
 
 ### 3.3 `/robot4/amr_state` — AMR 상태
 
