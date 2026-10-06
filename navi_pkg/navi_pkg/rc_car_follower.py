@@ -4,7 +4,7 @@
   ros2 run navi_pkg rc_car_follower --ros-args -r __ns:=/robot4
 
 흐름: 대기 -> (서비스 rc_car_detected) -> undock -> 지정 좌표 이동 -> 회전하며 탐색
-      -> (토픽 rc_car_target) -> 추종 -> dock 앞으로 복귀 -> dock
+      -> (토픽 rc_car_target) -> 추종 (멀면 전진, 가까우면 제자리) -> dock 앞으로 복귀 -> dock
 강의 코드 day3/3_1_a_nav_to_pose.py 의 TurtleBot4Navigator 사용법을 따른다.
 """
 import math
@@ -16,12 +16,13 @@ from interface_pkg.srv import WebcamDetection
 import rclpy
 from turtlebot4_navigation.turtlebot4_navigator import TurtleBot4Directions, TurtleBot4Navigator
 
-SCAN_SPEED = 0.4        # 탐색 회전 속도 (rad/s)
-SCAN_TIMEOUT = 40.0     # 이 시간 동안 못 찾으면 포기 (약 두 바퀴 반)
-LOST_SEC = 1.0          # rc_car_target 이 이만큼 안 오면 놓친 것
-DIST_TOL = 0.05         # 유지 거리와 이만큼 이내면 전진·후진하지 않는다 (m)
-K_LIN, MAX_LIN, MAX_BACK = 0.6, 0.2, 0.1    # 전진 이득, 최대 전진·후진 속도 (m/s)
-K_ANG, MAX_ANG = 1.0, 0.5                   # 회전 이득, 최대 회전 속도 (rad/s)
+SCAN_SPEED = 0.4        # 탐색 회전 명령 (rad/s). 실제로는 약 0.22 rad/s 로 돈다 (한 바퀴 약 28 초)
+SCAN_TIMEOUT = 60.0     # 이 시간 동안 못 찾으면 포기 (약 두 바퀴)
+LOST_SEC = 2.0          # rc_car_target 이 이만큼 안 오면 놓친 것 (주행 중에는 0.7~1.0 초 간격으로 온다)
+DIST_TOL = 0.05         # 유지 거리보다 이만큼 넘게 멀 때만 전진한다 (m)
+ANGLE_TOL = 0.05        # RC카 방향이 이만큼 이내면 회전하지 않는다 (rad)
+K_LIN, MAX_LIN = 0.6, 0.2       # 전진 이득, 최대 전진 속도 (m/s)
+K_ANG, MAX_ANG = 0.6, 0.5       # 회전 이득, 최대 회전 속도 (rad/s)
 
 
 class RcCarFollower:
@@ -66,13 +67,13 @@ class RcCarFollower:
     def stop(self):
         self.cmd_pub.publish(Twist())
 
-    def scan(self):
+    def scan(self, deadline):
         """RC카가 보일 때까지 제자리에서 돈다. 찾으면 True."""
         self.set_state(AmrState.SCANNING)
         cmd = Twist()
         cmd.angular.z = SCAN_SPEED
         start = time.monotonic()
-        while rclpy.ok() and time.monotonic() - start < SCAN_TIMEOUT:
+        while rclpy.ok() and time.monotonic() < min(deadline, start + SCAN_TIMEOUT):
             if self.target_time > start:
                 self.stop()
                 return True
@@ -91,10 +92,11 @@ class RcCarFollower:
                 break
             cmd = Twist()
             error = self.target.distance - self.keep_distance
-            if abs(error) > DIST_TOL:       # RC카가 멈추면 이 안에 들어와 AMR 도 멈춘다
-                cmd.linear.x = max(-MAX_BACK, min(MAX_LIN, K_LIN * error))
+            if error > DIST_TOL:        # 멀 때만 전진한다. 후진 명령은 로봇이 통째로 무시해 쓰지 않는다
+                cmd.linear.x = min(MAX_LIN, K_LIN * error)
             angle = math.atan2(self.target.offset, self.target.distance)
-            cmd.angular.z = max(-MAX_ANG, min(MAX_ANG, K_ANG * angle))
+            if abs(angle) > ANGLE_TOL:
+                cmd.angular.z = max(-MAX_ANG, min(MAX_ANG, K_ANG * angle))
             self.cmd_pub.publish(cmd)
         self.stop()
 
@@ -115,7 +117,7 @@ class RcCarFollower:
         if self.go_to_goal:
             self.nav.startToPose(self.nav.getPoseStamped(self.goal, TurtleBot4Directions.WEST))
 
-        while rclpy.ok() and time.monotonic() < deadline and self.scan():
+        while rclpy.ok() and self.scan(deadline):
             self.follow(deadline)
 
         self.set_state(AmrState.MOVING)
