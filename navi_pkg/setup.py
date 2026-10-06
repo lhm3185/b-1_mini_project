@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'rc_car_follower = navi_pkg.rc_car_follower:main',
         ],
     },
 )
