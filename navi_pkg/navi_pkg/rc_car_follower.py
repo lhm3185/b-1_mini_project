@@ -140,7 +140,7 @@ class RcCarFollower:
         if self.go_to_goal:
             self.nav.startToPose(self.nav.getPoseStamped(self.goal, TurtleBot4Directions.WEST))
 
-        while rclpy.ok() and self.scan():
+        while rclpy.ok() and time.monotonic() < self.deadline and self.scan():
             self.follow()
 
         self.set_state(AmrState.MOVING)
