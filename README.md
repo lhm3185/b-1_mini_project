@@ -41,7 +41,7 @@ ros2 run navi_pkg rc_car_follower --ros-args -r __ns:=/robot4
 ros2 run vision_pkg webcam_node
 ```
 
-웹캠이 RC카를 보면 AMR 이 undock → 지정 좌표 이동 → 회전하며 탐색 → 찾으면 유지 거리를 지키며 추종 → `follow_sec` 뒤 dock 앞으로 돌아와 dock 한다.
+웹캠이 RC카를 보면 AMR 이 알림음을 내고 undock → 지정 좌표 이동 → 회전하며 탐색 → 찾으면 유지 거리를 지키며 추종 → `follow_sec` 뒤 dock 앞으로 돌아와 dock 한다.
 
 | 노드 | 파라미터 | 기본값 | 뜻 |
 |---|---|---|---|
@@ -61,5 +61,6 @@ ros2 run vision_pkg webcam_node
 ros2 topic echo /robot4/rc_car_target
 ros2 run rqt_image_view rqt_image_view /robot4/rc_car_debug/compressed   # 박스와 거리가 그려진 영상
 ros2 service call /robot4/rc_car_detected interface_pkg/srv/WebcamDetection "{detected: true}"   # 웹캠 없이 출발시키기
+ros2 service call /robot4/stop_follow std_srvs/srv/Trigger   # 추종을 끝내고 dock 으로 복귀시키기
 ```
 

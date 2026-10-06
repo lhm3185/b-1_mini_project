@@ -5,15 +5,20 @@
 
 흐름: 대기 -> (서비스 rc_car_detected) -> undock -> 지정 좌표 이동 -> 회전하며 탐색
       -> (토픽 rc_car_target) -> 추종 (멀면 전진, 가까우면 제자리) -> dock 앞으로 복귀 -> dock
+추종을 끝내고 dock 시키려면 다른 터미널에서:
+  ros2 service call /robot4/stop_follow std_srvs/srv/Trigger
 강의 코드 day3/3_1_a_nav_to_pose.py 의 TurtleBot4Navigator 사용법을 따른다.
 """
 import math
 import time
 
+from builtin_interfaces.msg import Duration
 from geometry_msgs.msg import Twist
 from interface_pkg.msg import AmrState, RcCarTarget
 from interface_pkg.srv import WebcamDetection
+from irobot_create_msgs.msg import AudioNote, AudioNoteVector
 import rclpy
+from std_srvs.srv import Trigger
 from turtlebot4_navigation.turtlebot4_navigator import TurtleBot4Directions, TurtleBot4Navigator
 
 SCAN_SPEED = 0.4        # 탐색 회전 명령 (rad/s). 실제로는 약 0.22 rad/s 로 돈다 (한 바퀴 약 28 초)
@@ -38,13 +43,16 @@ class RcCarFollower:
 
         self.state = AmrState.IDLE
         self.start_requested = False
+        self.deadline = 0.0         # 이 시각이 지나면 탐색·추종을 끝내고 복귀한다
         self.target = None          # 마지막 rc_car_target
         self.target_time = 0.0      # 그것을 받은 시각 (이 PC 의 시계)
 
         self.cmd_pub = self.nav.create_publisher(Twist, 'cmd_vel_unstamped', 10)
         self.state_pub = self.nav.create_publisher(AmrState, 'amr_state', 10)
+        self.audio_pub = self.nav.create_publisher(AudioNoteVector, 'cmd_audio', 10)
         self.nav.create_subscription(RcCarTarget, 'rc_car_target', self.on_target, 10)
         self.nav.create_service(WebcamDetection, 'rc_car_detected', self.on_detected)
+        self.nav.create_service(Trigger, 'stop_follow', self.on_stop)
         self.nav.create_timer(1.0, lambda: self.state_pub.publish(AmrState(state=self.state)))
 
     def on_detected(self, request, response):
@@ -54,6 +62,19 @@ class RcCarFollower:
             self.start_requested = True
             self.nav.info('웹캠 검출 신호 수신, 출발')
         return response
+
+    def on_stop(self, request, response):
+        """사용자가 중단을 요청했다. 기한을 지금으로 당겨 복귀·dock 하게 한다."""
+        self.deadline = 0.0
+        response.success = True
+        response.message = '추종을 끝내고 dock 으로 돌아간다'
+        self.nav.info('중단 요청 수신')
+        return response
+
+    def beep(self):
+        note = Duration(nanosec=200_000_000)
+        self.audio_pub.publish(AudioNoteVector(notes=[
+            AudioNote(frequency=880, max_runtime=note), AudioNote(frequency=1320, max_runtime=note)]))
 
     def on_target(self, msg):
         self.target = msg
@@ -67,13 +88,13 @@ class RcCarFollower:
     def stop(self):
         self.cmd_pub.publish(Twist())
 
-    def scan(self, deadline):
+    def scan(self):
         """RC카가 보일 때까지 제자리에서 돈다. 찾으면 True."""
         self.set_state(AmrState.SCANNING)
         cmd = Twist()
         cmd.angular.z = SCAN_SPEED
         start = time.monotonic()
-        while rclpy.ok() and time.monotonic() < min(deadline, start + SCAN_TIMEOUT):
+        while rclpy.ok() and time.monotonic() < min(self.deadline, start + SCAN_TIMEOUT):
             if self.target_time > start:
                 self.stop()
                 return True
@@ -82,10 +103,10 @@ class RcCarFollower:
         self.stop()
         return False
 
-    def follow(self, deadline):
+    def follow(self):
         """유지 거리를 지키며 RC카를 따라간다. 놓치면 돌아온다."""
         self.set_state(AmrState.FOLLOWING)
-        while rclpy.ok() and time.monotonic() < deadline:
+        while rclpy.ok() and time.monotonic() < self.deadline:
             rclpy.spin_once(self.nav, timeout_sec=0.05)
             if time.monotonic() - self.target_time > LOST_SEC:
                 self.nav.info('RC카를 놓침')
@@ -108,7 +129,8 @@ class RcCarFollower:
         self.nav.info('웹캠 검출 신호 대기 (서비스 rc_car_detected)')
         while rclpy.ok() and not self.start_requested:
             rclpy.spin_once(self.nav, timeout_sec=0.05)
-        deadline = time.monotonic() + self.follow_sec
+        self.deadline = time.monotonic() + self.follow_sec
+        self.beep()
 
         self.set_state(AmrState.MOVING)
         self.nav.undock()
@@ -117,8 +139,8 @@ class RcCarFollower:
         if self.go_to_goal:
             self.nav.startToPose(self.nav.getPoseStamped(self.goal, TurtleBot4Directions.WEST))
 
-        while rclpy.ok() and self.scan(deadline):
-            self.follow(deadline)
+        while rclpy.ok() and self.scan():
+            self.follow()
 
         self.set_state(AmrState.MOVING)
         self.nav.startToPose(self.nav.getPoseStamped(self.dock_front, TurtleBot4Directions.NORTH))
