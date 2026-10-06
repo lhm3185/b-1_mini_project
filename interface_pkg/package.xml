@@ -3,7 +3,7 @@
 <package format="3">
   <name>interface_pkg</name>
   <version>0.0.0</version>
-  <description>미니 프로젝트 메시지 정의 (vision_pkg ↔ navi_pkg)</description>
+  <description>미니 프로젝트 메시지·서비스 정의 (vision_pkg ↔ navi_pkg)</description>
   <maintainer email="tnduaehowl37@gmail.com">doyoon-kim</maintainer>
   <license>Apache-2.0</license>
 
