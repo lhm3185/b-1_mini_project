@@ -28,7 +28,7 @@ class WebcamNode(Node):
         super().__init__('webcam_node')
 
         # ROS 파라미터
-        self.declare_parameter('camera_index', 0)
+        self.declare_parameter('camera_index', 2)
         self.declare_parameter(
             'model_path',
             str(DEFAULT_MODEL_PATH),
