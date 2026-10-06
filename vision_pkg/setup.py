@@ -24,7 +24,6 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'amr_cam = vision_pkg.amr_cam:main',
         ],
     },
 )

@@ -1,4 +1,4 @@
-# 인터페이스 정의 (초안 v0.9, 2026-10-06)
+# 인터페이스 정의 (초안 v0.8, 2026-10-06)
 
 `vision_pkg` 와 `navi_pkg` 가 주고받는 토픽·서비스 약속이다. 타입은 `interface_pkg` 의 `msg/`, `srv/` 에 있다.
 강의 코드(`to_students` day2·day3)의 방식에 맞췄다. 바꿀 것이 있으면 이 문서를 먼저 고치고 알린다.
@@ -151,27 +151,7 @@ future.add_done_callback(lambda f: self.get_logger().info(f'AMR started = {f.res
 | 지정 좌표(지도 x, y, 방향), 유지 거리, scan_motion 방식 | `navi_pkg` |
 | YOLO 모델, 검출 기준(신뢰도, 연속 프레임 수) | `vision_pkg` |
 
-## 7. `navi_pkg` 를 만들 때 알아 둘 것
+## 7. 확인이 필요한 것
 
-카메라 실측(10/6)과 설계 검토에서 나온 것이다.
-
-**거리와 탐색**
-- **유지 거리는 0.8 m 이상**(로봇 중심 기준)으로 잡는다. 이 카메라의 depth 는 약 0.64 m 보다 가까우면 값이 나오지 않아 `detected = false` 가 된다.
-- scan_motion 은 **"45° 돌고 → 1.0 초 멈추고 → 묻기"** 를 권한다. 회전 중에는 영상이 크게 번져(선명도가 정지 때의 약 1/14) 검출이 어렵다. 카메라 좌우 시야가 약 63° 라 45° 간격이면 빈틈이 없다. 정지 시간은 시험하면서 줄인다.
-- `rc_car_target` 은 영상을 초당 약 10 장 처리한 결과다. `header.stamp` 가 직전 응답과 같으면 새 정보가 아니다.
-
-**서비스를 쓸 때**
-- **노드가 돌고(spin) 있어야 `rc_car_detected` 요청을 받는다.** `TurtleBot4Navigator` 는 별도 노드라, 그 안에서 기다리는 동안 내 노드는 돌지 않는다. 순서형 코드의 모든 대기 루프(출발 대기, `while not navigator.isTaskComplete():`)에 `rclpy.spin_once(내_노드, timeout_sec=0.05)` 를 넣는다.
-- `startToPose()`, `dock()`, `undock()` 은 끝날 때까지 돌아오지 않는다. 그동안은 서비스에 답하지 못한다. 탐색·추종 중에는 바로 돌아오는 `goToPose()`, `spin()` 과 자기 루프를 쓴다.
-- `rc_car_target` 을 부르기 전에 `self.target_cli.service_is_ready()` 를 확인하고, 기다리는 시간은 0.2~0.3 초로 짧게 둔다. 시간이 넘으면 `self.target_cli.remove_pending_request(future)` 로 치운다.
-- 한 노드를 `spin_until_future_complete` 와 별도 spin 스레드로 동시에 돌리지 않는다.
-
-**고정 웹캠 노드**
-- 요청은 한 번에 하나만 보낸다. 응답이 없어 다시 보낼 때는 앞 요청을 `remove_pending_request` 로 치우고, **그 순간에도 RC카가 보일 때만** 다시 보낸다.
-- `started = false` 는 실패가 아니라 "AMR 이 이미 움직이는 중" 이다.
-- AMR 이 한 번 끝내고 `IDLE` 로 돌아온 뒤 다시 출발시키려면, 웹캠 노드가 `/robot4/amr_state` 를 보고 `IDLE` 로 바뀔 때 다시 요청할 수 있게 해야 한다. 시연을 한 번만 한다면 필요 없다.
-
-## 8. 확인이 필요한 것
-
-- [ ] "놓침" 기준 1.0 초(`vision_pkg` 의 `hold_sec`) — 통합 시험 때 조정
-- [ ] 유지 거리, scan_motion 정지 시간 — 통합 시험 때 조정
+- [ ] "놓침" 기준 1.0 초(`vision_pkg` 안의 값) — 통합 시험 때 조정
+- [ ] OAK-D 영상이 실제로 들어오는지 (10/6 에는 토픽 이름만 확인, 영상은 수신되지 않음)
