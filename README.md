@@ -6,6 +6,7 @@ ROKEY 부트캠프 미니 프로젝트. 고정 웹캠이 RC카를 발견하면 A
 |---|---|
 | `vision_pkg` | 고정 웹캠 RC카 검출, AMR 카메라(OAK-D)로 RC카 위치 산출 |
 | `navi_pkg` | 검출 신호 수신, 지정 좌표 이동, scan_motion, RC카 추종 |
+| `interface_pkg` | 두 패키지가 주고받는 메시지 정의 (`msg/`) |
 
 패키지 사이의 토픽 약속은 **[docs/interfaces.md](docs/interfaces.md)** 에 있다. 구현 전에 먼저 읽는다.
 
@@ -17,7 +18,7 @@ ROKEY 부트캠프 미니 프로젝트. 고정 웹캠이 RC카를 발견하면 A
 cd ~/rokey_ws/src
 git clone https://github.com/lhm3185/b-1_mini_project.git
 cd ~/rokey_ws
-colcon build --symlink-install --packages-select navi_pkg vision_pkg
+colcon build --symlink-install --packages-select interface_pkg navi_pkg vision_pkg
 source install/setup.bash
 ```
 
