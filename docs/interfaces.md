@@ -1,4 +1,4 @@
-# 인터페이스 정의 (초안 v0.8, 2026-10-06)
+# 인터페이스 정의 (초안 v0.9, 2026-10-06)
 
 `vision_pkg` 와 `navi_pkg` 가 주고받는 토픽·서비스 약속이다. 타입은 `interface_pkg` 의 `msg/`, `srv/` 에 있다.
 강의 코드(`to_students` day2·day3)의 방식에 맞췄다. 바꿀 것이 있으면 이 문서를 먼저 고치고 알린다.
@@ -9,11 +9,11 @@
 flowchart TD
     A[고정 웹캠: RC카 검출<br/>vision_pkg] -->|/robot4/rc_car_detected 요청<br/>응답 started = true| B[AMR: 지정 좌표로 이동<br/>navi_pkg]
     B --> C[AMR: scan_motion 으로 RC카 탐색]
-    C -->|/robot4/rc_car_target 응답<br/>detected = true| D[AMR: 일정 거리 유지하며 추종]
+    C -->|/robot4/rc_car_target 수신<br/>거리·방향| D[AMR: 일정 거리 유지하며 추종]
     D -->|RC카 정지| E[AMR: 일정 거리에서 정지]
     E -->|RC카 다시 이동| D
-    D -->|detected = false| C
-    F[AMR 카메라 OAK-D: 검출 + depth 로 거리 산출<br/>vision_pkg] -.->|/robot4/rc_car_target 응답| C
+    D -->|1초 넘게 미수신| C
+    F[AMR 카메라 OAK-D: 검출 + depth 로 거리 산출<br/>vision_pkg] -.->|/robot4/rc_car_target| C
     F -.-> D
 ```
 
@@ -26,19 +26,19 @@ flowchart TD
 
 `navi_pkg` 는 카메라 영상(RGB, depth)을 직접 받지 않는다.
 
-## 3. 우리가 정한 서비스 2개와 토픽 1개
+## 3. 우리가 정한 서비스 1개와 토픽 2개
 
 | 토픽 | 타입 | 보내는 쪽 | 받는 쪽 |
 |---|---|---|---|
 | `/robot4/rc_car_detected` (**서비스**) | `interface_pkg/srv/WebcamDetection` | 요청: `vision_pkg` (웹캠 노드) | 응답: `navi_pkg` |
-| `/robot4/rc_car_target` (**서비스**) | `interface_pkg/srv/RcCarTarget` | 응답: `vision_pkg` (AMR 카메라 노드) | 요청: `navi_pkg` |
+| `/robot4/rc_car_target` (토픽) | `interface_pkg/msg/RcCarTarget` | 발행: `vision_pkg` (AMR 카메라 노드) | 구독: `navi_pkg` |
 | `/robot4/amr_state` | `interface_pkg/msg/AmrState` | `navi_pkg` | `vision_pkg`, 시연 확인용 |
 
 토픽 QoS 는 기본값(`10`)이다.
 
 ```python
-from interface_pkg.msg import AmrState
-from interface_pkg.srv import WebcamDetection, RcCarTarget
+from interface_pkg.msg import AmrState, RcCarTarget
+from interface_pkg.srv import WebcamDetection
 
 # --- navi_pkg: 검출 신호 받기 (서비스 서버) ---
 self.create_service(WebcamDetection, 'rc_car_detected', self.on_detected)
@@ -49,13 +49,12 @@ def on_detected(self, request, response):
         ...                      # 동작 시작 (여기서 오래 걸리는 일을 하지 말고 표시만 해 둔다)
     return response
 
-# --- navi_pkg: RC카 거리 묻기 (서비스 클라이언트) ---
-self.target_cli = self.create_client(RcCarTarget, 'rc_car_target')
-future = self.target_cli.call_async(RcCarTarget.Request())
-rclpy.spin_until_future_complete(self, future, timeout_sec=1.0)
-res = future.result()            # None 이면 응답 없음(비전 노드가 꺼져 있음)
-if res and res.detected:
-    res.distance, res.offset     # 전방 거리(m), 좌우(m)
+# --- navi_pkg: RC카 거리 받기 (토픽 구독) ---
+self.create_subscription(RcCarTarget, 'rc_car_target', self.on_target, 10)
+
+def on_target(self, msg):
+    self.target = msg                              # msg.distance, msg.offset
+    self.target_time = self.get_clock().now()      # 놓침 판단은 받은 시각으로
 
 # --- navi_pkg: 상태 알리기 (토픽) ---
 self.state_pub = self.create_publisher(AmrState, 'amr_state', 10)
@@ -83,25 +82,23 @@ future.add_done_callback(lambda f: self.get_logger().info(f'AMR started = {f.res
 - **`navi_pkg`(응답하는 쪽):** `IDLE` 일 때 `detected = true` 를 받으면 출발하고 `started = true` 로 답한다. 서비스 콜백 안에서는 이동을 직접 실행하지 않는다 — "출발" 표시만 하고 바로 응답한 뒤, 실제 이동은 `main` 루프나 타이머에서 한다. (콜백 안에서 오래 걸리면 응답이 늦어져 웹캠 노드가 기다린다.)
 - 이름이 `/robot4/...` 인 것은 응답하는 쪽이 로봇이기 때문이다. 웹캠 노드는 로봇에 속하지 않으므로 전체 이름으로 부른다.
 
-### 3.2 `/robot4/rc_car_target` — RC카까지의 거리와 방향 (서비스, depth 결과)
+### 3.2 `/robot4/rc_car_target` — RC카까지의 거리와 방향 (토픽, depth 결과)
 
-**추종에 쓰는 거리 값을 이 서비스로 묻는다.** `navi_pkg` 는 depth 영상을 직접 받지 않는다. `vision_pkg` 가 OAK-D 의 depth 영상에서 RC카 위치의 깊이를 읽어 거리로 바꿔 두었다가, 요청이 오면 가장 최근 결과를 바로 돌려준다.
+**추종에 쓰는 거리 값이 이 토픽이다.** `navi_pkg` 는 depth 영상을 직접 받지 않는다. `vision_pkg` 가 OAK-D 의 depth 영상에서 RC카 위치의 깊이를 읽어 거리로 바꿔 보낸다.
 
-- 요청에는 내용이 없다. 응답은 아래와 같다.
+- AMR 카메라에 RC카(`car`)가 보이고 깊이 값이 유효할 때(0.2~5.0 m)**만** 보낸다. 초당 약 10 번.
+- **메시지가 오기 시작하면 "찾았다" 이다.** scan_motion 은 첫 메시지를 받으면 멈추면 된다.
 
 | 값 | 뜻 |
 |---|---|
-| `detected` | 최근 **1.0 초** 안의 영상에서 RC카(`car`)를 찾았고 깊이 값이 유효(0.2~5.0 m)하면 `true` |
 | `distance` | RC카까지의 **전방 거리** (m) |
 | `offset` | 좌우 치우침 (m). 왼쪽이 +, 오른쪽이 − |
 | `header` | `stamp` = 그 영상이 찍힌 시각, `frame_id = "base_link"` |
 
-- `detected` 가 `false` 면 `distance`, `offset` 은 쓰지 않는다. **"놓침" 판단은 `vision_pkg` 가 한다**(1.0 초, 시험하면서 고친다). `navi_pkg` 는 시각을 비교할 필요가 없다.
 - `distance`, `offset` 은 **로봇 중심(`base_link`) 기준**이다. 범퍼에서 잰 거리는 로봇 반지름(약 0.17 m)만큼 더 짧다. 유지 거리를 정할 때 이 기준으로 맞춘다.
 - 추종은 이 두 값으로 된다: `distance − 유지 거리` 가 0 이 되게 전진·후진하고, `atan2(offset, distance)` 가 0 이 되게 회전한다. RC카가 멈추면 `distance` 가 유지 거리에 머물러 AMR 도 멈춘다. 거리 조절과 회전은 `navi_pkg` 가 한다.
-- 영상은 초당 약 10 장 처리된다. 그보다 자주 물어도 같은 값이 온다.
-- scan_motion 중에는 `detected` 가 `true` 가 될 때까지 반복해서 묻는다.
-- **주의:** 구독 콜백이나 타이머 콜백 **안에서** `spin_until_future_complete` 를 부르면 멈춘다. 콜백 안에서는 `call_async` 뒤 `future.add_done_callback(...)` 을 쓴다. `TurtleBot4Navigator` 를 쓰는 순서형 코드(`main` 안의 `while` 루프)에서는 위 예시 그대로 쓰면 된다.
+- **메시지가 오지 않으면 "못 찾음" 이다.** `navi_pkg` 는 마지막으로 받은 뒤 **1.0 초**가 지나면 놓친 것으로 본다. 이 값으로 시작해 시험하면서 고친다.
+- **1.0 초는 `navi_pkg` 가 메시지를 받은 시각으로 잰다.** `header.stamp` 와 현재 시각을 비교하지 않는다. `header.stamp` 는 로봇 시계, `navi_pkg` 는 PC 시계라 서로 어긋날 수 있다.
 - 만드는 방법은 강의 코드 `day3/3_3_d_depth_to_nav_goal_ts.py` 와 같다(픽셀 + 깊이 → 카메라 좌표 → TF 변환). 변환 대상만 `map` 대신 `base_link` 다.
 
 ### 3.3 `/robot4/amr_state` — AMR 상태
@@ -153,5 +150,5 @@ future.add_done_callback(lambda f: self.get_logger().info(f'AMR started = {f.res
 
 ## 7. 확인이 필요한 것
 
-- [ ] "놓침" 기준 1.0 초(`vision_pkg` 안의 값) — 통합 시험 때 조정
+- [ ] "놓침" 기준 1.0 초 — 통합 시험 때 조정
 - [ ] OAK-D 영상이 실제로 들어오는지 (10/6 에는 토픽 이름만 확인, 영상은 수신되지 않음)

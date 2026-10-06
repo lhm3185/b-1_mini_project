@@ -1,9 +1,0 @@
-# AMR 카메라(OAK-D)로 본 RC카까지의 거리와 방향을 묻는다 (depth 로 계산)
-# 서비스: /robot4/rc_car_target   (요청: navi_pkg, 응답: vision_pkg)
-# 요청에는 내용이 없다. vision_pkg 는 가장 최근 영상의 결과를 바로 돌려준다.
-
----
-bool detected            # 최근 1.0 초 안의 영상에서 RC카(car)를 찾았으면 true. false 면 아래 값은 쓰지 않는다
-std_msgs/Header header   # stamp = 그 영상이 찍힌 시각, frame_id = "base_link"
-float32 distance         # 전방 거리 (m), 로봇 중심 기준
-float32 offset           # 좌우 치우침 (m). 왼쪽 +, 오른쪽 -

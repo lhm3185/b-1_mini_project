@@ -7,7 +7,7 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/AmrState.msg"
-  "srv/RcCarTarget.srv"
+  "msg/RcCarTarget.msg"
   "srv/WebcamDetection.srv"
   DEPENDENCIES std_msgs
 )
