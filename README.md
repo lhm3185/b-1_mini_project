@@ -9,6 +9,7 @@ ROKEY 부트캠프 미니 프로젝트. 고정 웹캠이 RC카를 발견하면 A
 | `interface_pkg` | 두 패키지가 주고받는 메시지·서비스 정의 (`msg/`, `srv/`) |
 
 패키지 사이의 토픽 약속은 **[docs/interfaces.md](docs/interfaces.md)** 에 있다. 구현 전에 먼저 읽는다.
+터미널별 실행 순서는 **[docs/run_guide.md](docs/run_guide.md)** 에 있다.
 
 ## 받기 · 빌드
 
