@@ -1,4 +1,4 @@
-# 인터페이스 정의 (초안 v0.7, 2026-10-06)
+# 인터페이스 정의 (초안 v0.8, 2026-10-06)
 
 `vision_pkg` 와 `navi_pkg` 가 주고받는 토픽·서비스 약속이다. 타입은 `interface_pkg` 의 `msg/`, `srv/` 에 있다.
 강의 코드(`to_students` day2·day3)의 방식에 맞췄다. 바꿀 것이 있으면 이 문서를 먼저 고치고 알린다.
@@ -7,7 +7,7 @@
 
 ```mermaid
 flowchart TD
-    A[고정 웹캠: RC카 검출<br/>vision_pkg] -->|/webcam/rc_car_detected = true| B[AMR: 지정 좌표로 이동<br/>navi_pkg]
+    A[고정 웹캠: RC카 검출<br/>vision_pkg] -->|/robot4/rc_car_detected 요청<br/>응답 started = true| B[AMR: 지정 좌표로 이동<br/>navi_pkg]
     B --> C[AMR: scan_motion 으로 RC카 탐색]
     C -->|/robot4/rc_car_target 응답<br/>detected = true| D[AMR: 일정 거리 유지하며 추종]
     D -->|RC카 정지| E[AMR: 일정 거리에서 정지]
@@ -26,24 +26,30 @@ flowchart TD
 
 `navi_pkg` 는 카메라 영상(RGB, depth)을 직접 받지 않는다.
 
-## 3. 우리가 정한 토픽 2개와 서비스 1개
+## 3. 우리가 정한 서비스 2개와 토픽 1개
 
 | 토픽 | 타입 | 보내는 쪽 | 받는 쪽 |
 |---|---|---|---|
-| `/webcam/rc_car_detected` | `interface_pkg/msg/WebcamDetection` | `vision_pkg` (웹캠 노드) | `navi_pkg` |
+| `/robot4/rc_car_detected` (**서비스**) | `interface_pkg/srv/WebcamDetection` | 요청: `vision_pkg` (웹캠 노드) | 응답: `navi_pkg` |
 | `/robot4/rc_car_target` (**서비스**) | `interface_pkg/srv/RcCarTarget` | 응답: `vision_pkg` (AMR 카메라 노드) | 요청: `navi_pkg` |
 | `/robot4/amr_state` | `interface_pkg/msg/AmrState` | `navi_pkg` | `vision_pkg`, 시연 확인용 |
 
 토픽 QoS 는 기본값(`10`)이다.
 
 ```python
-from interface_pkg.msg import WebcamDetection, AmrState
-from interface_pkg.srv import RcCarTarget
+from interface_pkg.msg import AmrState
+from interface_pkg.srv import WebcamDetection, RcCarTarget
 
-# 받는 쪽 (navi_pkg)
-self.create_subscription(WebcamDetection, '/webcam/rc_car_detected', self.on_detected, 10)
+# --- navi_pkg: 검출 신호 받기 (서비스 서버) ---
+self.create_service(WebcamDetection, 'rc_car_detected', self.on_detected)
 
-# RC카 거리 묻기 (navi_pkg)
+def on_detected(self, request, response):
+    response.started = request.detected and self.state == AmrState.IDLE
+    if response.started:
+        ...                      # 동작 시작 (여기서 오래 걸리는 일을 하지 말고 표시만 해 둔다)
+    return response
+
+# --- navi_pkg: RC카 거리 묻기 (서비스 클라이언트) ---
 self.target_cli = self.create_client(RcCarTarget, 'rc_car_target')
 future = self.target_cli.call_async(RcCarTarget.Request())
 rclpy.spin_until_future_complete(self, future, timeout_sec=1.0)
@@ -51,17 +57,31 @@ res = future.result()            # None 이면 응답 없음(비전 노드가 �
 if res and res.detected:
     res.distance, res.offset     # 전방 거리(m), 좌우(m)
 
-# 보내는 쪽 (navi_pkg)
+# --- navi_pkg: 상태 알리기 (토픽) ---
 self.state_pub = self.create_publisher(AmrState, 'amr_state', 10)
 self.state_pub.publish(AmrState(state=AmrState.SCANNING))
+
+# --- vision_pkg 웹캠 노드: 검출 알리기 (서비스 클라이언트) ---
+self.detected_cli = self.create_client(WebcamDetection, '/robot4/rc_car_detected')
+req = WebcamDetection.Request(detected=True)
+req.header.stamp = self.get_clock().now().to_msg()
+future = self.detected_cli.call_async(req)
+future.add_done_callback(lambda f: self.get_logger().info(f'AMR started = {f.result().started}'))
 ```
 
-### 3.1 `/webcam/rc_car_detected` — 검출 신호
+### 3.1 `/robot4/rc_car_detected` — 검출 신호 (서비스)
 
-- `detected`: 고정 웹캠 화면에 RC카가 있으면 `true`, 없으면 `false`. `header.stamp` 는 영상이 찍힌 시각.
-- **5 Hz 로 계속 보낸다.** 한 번만 보내면 늦게 켠 노드가 놓치기 때문이다.
-- 잘못된 검출로 출발하지 않도록, 연속 몇 프레임 검출됐을 때만 `true` 로 바꾸는 것은 `vision_pkg` 가 한다.
-- `navi_pkg` 는 `IDLE` 상태에서 처음 `true` 를 받으면 출발하고, 그 뒤 값은 무시한다.
+고정 웹캠 노드가 RC카를 검출하면 AMR 에 **한 번** 요청하고, AMR 이 동작을 시작했는지 응답으로 받는다.
+
+| | 값 | 뜻 |
+|---|---|---|
+| 요청 | `detected` | RC카를 검출했으면 `true` |
+| 요청 | `header.stamp` | 영상이 찍힌 시각 |
+| 응답 | `started` | AMR 이 동작을 시작했으면 `true`. 이미 동작 중(`IDLE` 이 아님)이라 무시했으면 `false` |
+
+- **웹캠 노드(요청하는 쪽):** 잘못된 검출로 출발시키지 않도록 연속 몇 프레임 검출됐을 때 요청한다. **응답을 받으면 다시 보내지 않는다.** 응답이 없으면(AMR 노드가 아직 안 켜짐) 응답을 받을 때까지 1 초 간격으로 다시 시도한다.
+- **`navi_pkg`(응답하는 쪽):** `IDLE` 일 때 `detected = true` 를 받으면 출발하고 `started = true` 로 답한다. 서비스 콜백 안에서는 이동을 직접 실행하지 않는다 — "출발" 표시만 하고 바로 응답한 뒤, 실제 이동은 `main` 루프나 타이머에서 한다. (콜백 안에서 오래 걸리면 응답이 늦어져 웹캠 노드가 기다린다.)
+- 이름이 `/robot4/...` 인 것은 응답하는 쪽이 로봇이기 때문이다. 웹캠 노드는 로봇에 속하지 않으므로 전체 이름으로 부른다.
 
 ### 3.2 `/robot4/rc_car_target` — RC카까지의 거리와 방향 (서비스, depth 결과)
 
@@ -118,11 +138,11 @@ self.state_pub.publish(AmrState(state=AmrState.SCANNING))
 
 ## 5. 네임스페이스
 
-- 노드 안에서는 토픽·서비스 이름을 **앞에 `/` 없이** 쓴다(`rc_car_target`, `amr_state`). 실행할 때 로봇 번호를 준다.
+- 로봇 쪽 노드 안에서는 토픽·서비스 이름을 **앞에 `/` 없이** 쓴다(`rc_car_detected`, `rc_car_target`, `amr_state`). 실행할 때 로봇 번호를 준다.
   ```bash
   ros2 run <패키지> <노드> --ros-args -r __ns:=/robot4
   ```
-- 고정 웹캠 노드만 로봇에 속하지 않으므로 `/webcam/rc_car_detected` 를 전체 이름으로 쓴다.
+- 고정 웹캠 노드만 로봇에 속하지 않으므로 네임스페이스 없이 실행하고, 서비스를 `/robot4/rc_car_detected` 전체 이름으로 부른다.
 
 ## 6. 각 패키지가 정하는 값 (인터페이스 아님)
 

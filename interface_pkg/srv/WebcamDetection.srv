@@ -1,0 +1,8 @@
+# 고정 웹캠이 RC카를 검출했다고 AMR 에 알린다
+# 서비스: /robot4/rc_car_detected   (요청: vision_pkg 웹캠 노드, 응답: navi_pkg)
+# 웹캠 노드는 RC카를 검출했을 때 한 번만 요청한다.
+
+std_msgs/Header header   # stamp = 영상이 찍힌 시각
+bool detected            # RC카를 검출했으면 true
+---
+bool started             # AMR 이 동작을 시작했으면 true. 이미 동작 중이라 무시했으면 false
