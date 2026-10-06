@@ -26,6 +26,7 @@ SCAN_TIMEOUT = 60.0     # 이 시간 동안 못 찾으면 포기 (약 두 바퀴
 LOST_SEC = 2.0          # rc_car_target 이 이만큼 안 오면 놓친 것 (주행 중에는 0.7~1.0 초 간격으로 온다)
 DIST_TOL = 0.05         # 유지 거리보다 이만큼 넘게 멀 때만 전진한다 (m)
 ANGLE_TOL = 0.05        # RC카 방향이 이만큼 이내면 회전하지 않는다 (rad)
+FRESH_SEC = 0.3         # 이보다 오래된 rc_car_target 으로는 회전하지 않는다 (늦은 값으로 돌면 좌우로 떨린다)
 K_LIN, MAX_LIN = 0.6, 0.2       # 전진 이득, 최대 전진 속도 (m/s)
 K_ANG, MAX_ANG = 0.6, 0.5       # 회전 이득, 최대 회전 속도 (rad/s)
 
@@ -116,7 +117,7 @@ class RcCarFollower:
             if error > DIST_TOL:        # 멀 때만 전진한다. 후진 명령은 로봇이 통째로 무시해 쓰지 않는다
                 cmd.linear.x = min(MAX_LIN, K_LIN * error)
             angle = math.atan2(self.target.offset, self.target.distance)
-            if abs(angle) > ANGLE_TOL:
+            if abs(angle) > ANGLE_TOL and time.monotonic() - self.target_time < FRESH_SEC:
                 cmd.angular.z = max(-MAX_ANG, min(MAX_ANG, K_ANG * angle))
             self.cmd_pub.publish(cmd)
         self.stop()
