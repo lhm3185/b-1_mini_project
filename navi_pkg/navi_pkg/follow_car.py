@@ -19,6 +19,8 @@ from geometry_msgs.msg import Twist
 from interface_pkg.msg import AmrState, RcCarTarget
 from interface_pkg.srv import WebcamDetection
 from irobot_create_msgs.msg import AudioNote, AudioNoteVector
+from lifecycle_msgs.srv import GetState
+from nav2_msgs.srv import ManageLifecycleNodes
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from std_srvs.srv import Trigger
@@ -34,6 +36,7 @@ MAX_LINEAR_SPEED = 0.2      # 최대 전진 속도 (m/s). 후진은 하지 않�
 MAX_ANGULAR_SPEED = 0.5     # 최대 회전 속도 (rad/s)
 LINEAR_GAIN = 0.6
 ANGULAR_GAIN = 0.6
+NAV2_WAIT = 15.0            # 초기 위치를 준 뒤 Nav2 가 이 시간 안에 켜지지 않으면 다시 기동한다 (초)
 
 
 class FollowCar:
@@ -59,6 +62,9 @@ class FollowCar:
         self.navigator.create_subscription(RcCarTarget, 'rc_car_target', self.on_target, 10)
         self.navigator.create_service(WebcamDetection, 'rc_car_detected', self.on_detected)
         self.navigator.create_service(Trigger, 'stop_follow', self.on_stop)
+        self.nav2_state = self.navigator.create_client(GetState, 'bt_navigator/get_state')
+        self.nav2_manager = self.navigator.create_client(
+            ManageLifecycleNodes, 'lifecycle_manager_navigation/manage_nodes')
         self.navigator.create_timer(1.0, lambda: self.state_pub.publish(AmrState(state=self.state)))
 
     def on_detected(self, request, response):
@@ -108,7 +114,30 @@ class FollowCar:
         initial_pose = self.navigator.getPoseStamped([0.0, 0.0], TurtleBot4Directions.SOUTH)
         self.navigator.setInitialPose(initial_pose)
         self.navigator.info('0.0, 0.0 초기 포즈 설정 완료')
-        self.navigator.waitUntilNav2Active()
+        self.start_nav2()
+
+    def nav2_active(self):
+        future = self.nav2_state.call_async(GetState.Request())
+        rclpy.spin_until_future_complete(self.navigator, future, timeout_sec=2.0)
+        return future.done() and future.result() is not None and future.result().current_state.label == 'active'
+
+    def start_nav2(self):
+        """Nav2 가 켜질 때까지 기다린다. 포기한 상태면 다시 기동시킨다.
+
+        도킹 중에는 절전으로 라이다가 꺼져 있어 지도 위 위치(map TF)가 나오지 않는다.
+        Nav2 는 그 위치를 60 초 기다리다 기동을 포기하므로, undock 하고 초기 위치를 준 지금 다시 켠다.
+        """
+        self.navigator.waitUntilNav2Active(navigator='amcl')    # 위치 추정이 초기 위치를 받을 때까지
+        start = time.monotonic()
+        while rclpy.ok() and not self.nav2_active():
+            if time.monotonic() - start > NAV2_WAIT:
+                self.navigator.info('Nav2 가 꺼져 있어 다시 기동한다')
+                for command in (ManageLifecycleNodes.Request.RESET, ManageLifecycleNodes.Request.STARTUP):
+                    future = self.nav2_manager.call_async(ManageLifecycleNodes.Request(command=command))
+                    rclpy.spin_until_future_complete(self.navigator, future)
+                start = time.monotonic()
+            rclpy.spin_once(self.navigator, timeout_sec=0.5)
+        self.navigator.info('Nav2 준비 완료')
 
     def detecting_motion(self, angular_speed=SCAN_SPEED):
         """RC카 타깃 메시지를 받을 때까지 회전하며 탐색한다. 찾으면 True."""
