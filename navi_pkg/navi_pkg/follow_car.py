@@ -7,6 +7,7 @@
 
 흐름: 대기 -> (서비스 rc_car_detected) -> init_car (undock, 초기 위치) -> 지정 좌표 이동
       -> detecting_motion (회전 탐색) -> (토픽 rc_car_target) -> follow (추종) -> home_pose (복귀, dock) -> 대기
+추종은 Nav2 에 맡긴다(벽과 장애물을 피한다). RC카 위치를 지도 좌표로 바꿔 목표로 주고, 움직일 때마다 갱신한다.
 추종을 끝내고 dock 시키려면 다른 터미널에서:
   ros2 service call /robot4/stop_follow std_srvs/srv/Trigger
 강의 코드 day3/3_1_a_nav_to_pose.py 의 TurtleBot4Navigator 사용법을 따른다.
@@ -14,8 +15,9 @@
 import math
 import time
 
+from ament_index_python.packages import get_package_share_directory
 from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import PointStamped, PoseStamped, Twist
 from interface_pkg.msg import AmrState, RcCarTarget
 from interface_pkg.srv import WebcamDetection
 from irobot_create_msgs.msg import AudioNote, AudioNoteVector
@@ -23,10 +25,15 @@ from lifecycle_msgs.srv import GetState
 from nav2_msgs.srv import ManageLifecycleNodes
 import rclpy
 from rclpy.executors import ExternalShutdownException
+from rclpy.time import Time
 from std_srvs.srv import Trigger
+from tf2_geometry_msgs.tf2_geometry_msgs import do_transform_point
+from tf2_ros import Buffer, TransformException, TransformListener
 from turtlebot4_navigation.turtlebot4_navigator import TurtleBot4Directions, TurtleBot4Navigator
 
+FOLLOW_BT = get_package_share_directory('navi_pkg') + '/behavior_trees/follow_rc_car.xml'
 DISTANCE_TOLERANCE = 0.05   # 유지 거리보다 이만큼 넘게 멀 때만 전진한다 (m)
+NAV2_START = 0.2            # Nav2 추종: 유지 거리보다 이만큼 넘게 멀어지면 따라가기 시작한다 (m). 멈출 때는 위 값
 ANGLE_TOLERANCE = 0.05      # RC카 방향이 이만큼 이내면 회전하지 않는다 (rad)
 LOST_TIMEOUT = 2.0          # rc_car_target 이 이만큼 안 오면 놓친 것 (주행 중에는 0.7~1.0 초 간격으로 온다)
 FRESH_TIMEOUT = 0.3         # 이보다 오래된 rc_car_target 으로는 회전하지 않는다 (늦은 값으로 돌면 좌우로 떨린다)
@@ -46,7 +53,9 @@ class FollowCar:
     def __init__(self):
         self.navigator = TurtleBot4Navigator()
         declare = self.navigator.declare_parameter
-        self.keep_distance = declare('keep_distance', 0.8).value    # 로봇 중심 기준 (m). 0.64 m 보다 가까우면 깊이가 안 나온다
+        # 로봇 중심 기준 (m). 0.64 m 보다 가까우면 깊이가 안 나온다. Nav2 추종은 follow_rc_car.xml 의 distance 도 같이 바꾼다
+        self.keep_distance = declare('keep_distance', 0.8).value
+        self.use_nav2 = declare('use_nav2', True).value             # False 면 속도 명령을 직접 보내 따라간다(장애물을 보지 않는다)
         self.follow_sec = declare('follow_sec', 600.0).value        # 출발부터 이 시간이 지나면 복귀한다
         self.go_to_goal = declare('go_to_goal', True).value         # False 면 undock 한 자리에서 바로 탐색
         self.goal = [declare('goal_x', -3.88).value, declare('goal_y', -2.84).value]
@@ -61,6 +70,9 @@ class FollowCar:
         self.cmd_pub = self.navigator.create_publisher(Twist, 'cmd_vel_unstamped', 10)
         self.state_pub = self.navigator.create_publisher(AmrState, 'amr_state', 10)
         self.audio_pub = self.navigator.create_publisher(AudioNoteVector, 'cmd_audio', 10)
+        self.goal_pub = self.navigator.create_publisher(PoseStamped, 'goal_update', 10)     # Nav2 추종의 목표 갱신
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self.navigator)    # 실행할 때 /tf 리매핑 필요
         self.navigator.create_subscription(RcCarTarget, 'rc_car_target', self.on_target, 10)
         self.navigator.create_service(WebcamDetection, 'rc_car_detected', self.on_detected)
         self.navigator.create_service(Trigger, 'stop_follow', self.on_stop)
@@ -172,9 +184,32 @@ class FollowCar:
         self.stop()
         return False
 
+    def target_pose(self):
+        """마지막 rc_car_target(로봇 기준)을 지도 좌표의 목표로 바꾼다. 지도 위 로봇 위치를 모르면 None."""
+        try:
+            robot = self.tf_buffer.lookup_transform('map', 'base_link', Time())
+        except TransformException as e:
+            self.navigator.get_logger().warn(f'지도 위 로봇 위치를 알 수 없다: {e}', throttle_duration_sec=5.0)
+            return None
+        point = PointStamped()
+        point.point.x, point.point.y = float(self.target.distance), float(self.target.offset)
+        point = do_transform_point(point, robot).point
+        yaw = math.atan2(point.y - robot.transform.translation.y, point.x - robot.transform.translation.x)
+        pose = PoseStamped()
+        pose.header.frame_id = 'map'
+        pose.header.stamp = self.navigator.get_clock().now().to_msg()
+        pose.pose.position.x, pose.pose.position.y = point.x, point.y
+        pose.pose.orientation.z, pose.pose.orientation.w = math.sin(yaw / 2), math.cos(yaw / 2)    # RC카를 바라보는 방향
+        return pose
+
     def follow(self):
-        """유지 거리를 지키며 RC카를 따라간다. 놓치면 돌아온다."""
+        """유지 거리를 지키며 RC카를 따라간다. 놓치면 돌아온다.
+
+        멀면 Nav2 가 RC카 쪽으로 간다(경로가 유지 거리 앞에서 잘린다). 가까우면 Nav2 를 멈추고 방향만 맞춘다.
+        """
         self.set_state(AmrState.FOLLOWING)
+        navigating = False      # Nav2 추종 목표가 걸려 있는가
+        used = 0.0              # 목표로 쓴 마지막 rc_car_target 의 수신 시각
         while rclpy.ok() and time.monotonic() < self.deadline:
             rclpy.spin_once(self.navigator, timeout_sec=0.05)
             age = time.monotonic() - self.target_time
@@ -182,14 +217,31 @@ class FollowCar:
                 self.navigator.info('RC카를 놓침')
                 break
 
-            cmd = Twist()
             distance_error = self.target.distance - self.keep_distance
-            if distance_error > DISTANCE_TOLERANCE:     # 멀 때만 전진한다. RC카가 멈추면 AMR 도 멈춘다
+            if self.use_nav2 and distance_error > (DISTANCE_TOLERANCE if navigating else NAV2_START):
+                if self.target_time != used:        # 새 값이 왔을 때만 목표를 갱신한다
+                    used = self.target_time
+                    pose = self.target_pose()
+                    if pose is None:
+                        continue
+                    if navigating and not self.navigator.isTaskComplete():
+                        self.goal_pub.publish(pose)
+                    else:                           # 처음이거나, Nav2 가 경로를 못 찾아 끝냈으면 다시 건다
+                        navigating = self.navigator.goToPose(pose, behavior_tree=FOLLOW_BT)
+                continue
+            if navigating:
+                self.navigator.cancelTask()
+                navigating = False
+
+            cmd = Twist()
+            if not self.use_nav2 and distance_error > DISTANCE_TOLERANCE:   # 직접 제어: 멀 때만 전진한다
                 cmd.linear.x = min(MAX_LINEAR_SPEED, LINEAR_GAIN * distance_error)
             angle = math.atan2(self.target.offset, self.target.distance)
             if abs(angle) > ANGLE_TOLERANCE and age < FRESH_TIMEOUT:
                 cmd.angular.z = max(-MAX_ANGULAR_SPEED, min(MAX_ANGULAR_SPEED, ANGULAR_GAIN * angle))
             self.cmd_pub.publish(cmd)
+        if navigating:
+            self.navigator.cancelTask()
         self.stop()
 
     def home_pose(self):

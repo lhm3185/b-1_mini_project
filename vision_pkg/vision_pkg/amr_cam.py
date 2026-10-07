@@ -19,7 +19,9 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
-from sensor_msgs.msg import CameraInfo, CompressedImage, Image
+from sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
+from sensor_msgs_py import point_cloud2
+from std_msgs.msg import Header
 from tf2_geometry_msgs.tf2_geometry_msgs import do_transform_point
 from tf2_ros import Buffer, TransformException, TransformListener
 from ultralytics import YOLO
@@ -28,6 +30,7 @@ DEFAULT_MODEL_PATH = get_package_share_directory('vision_pkg') + '/models/amrcam
 LOW_CONF = 0.5                # 이 값 이상은 모두 받아 디버그 영상·로그에 쓴다
 DEPTH_MIN, DEPTH_MAX = 0.2, 5.0   # 유효 깊이 (m)
 MIN_VALID_RATIO = 0.1         # 박스 가운데 영역에서 유효 깊이 픽셀의 최소 비율
+DUMMY_Z = 0.1                 # 더미를 장애물 점으로 낼 때의 높이 (m, base_link 기준). costmap 이 받는 높이 범위 안
 
 
 class AmrCam(Node):
@@ -67,6 +70,7 @@ class AmrCam(Node):
 
         self.debug_pub = self.create_publisher(CompressedImage, 'rc_car_debug/compressed', 1)
         self.target_pub = self.create_publisher(RcCarTarget, 'rc_car_target', 10)
+        self.dummy_pub = self.create_publisher(PointCloud2, 'dummy_points', 10)    # 더미 위치. Nav2 costmap 이 장애물로 받는다
         self.create_timer(0.1, self.process)
         self.get_logger().info(f'amr_cam 시작: conf={self.conf}, best_effort={best_effort}, '
                                f'compressed_depth={self.compressed_depth}, model={model_path}')
@@ -117,12 +121,13 @@ class AmrCam(Node):
         target = self.locate(car, depth, rgb_msg.header.stamp) if car is not None else None
         if target is not None:      # 보일 때만 보낸다. 안 보내면 받는 쪽이 놓친 것으로 본다
             self.target_pub.publish(target)
+        self.publish_dummies(boxes, depth, rgb_msg.header.stamp)
         if self.show_window or self.debug_pub.get_subscription_count() > 0:
             self.show_debug(rgb, boxes, target, rgb_msg.header)
 
-    def locate(self, car, depth, stamp):
-        """박스 가운데 50% 영역의 깊이 중앙값으로 base_link 기준 거리·좌우를 구한다."""
-        x1, y1, x2, y2 = (int(v) for v in car.xyxy[0])
+    def box_position(self, box, depth):
+        """박스 가운데 50% 영역의 깊이 중앙값으로 base_link 기준 (전방, 좌우)와 카메라 기준 깊이를 구한다."""
+        x1, y1, x2, y2 = (int(v) for v in box.xyxy[0])
         w, h = x2 - x1, y2 - y1
         z = depth[y1 + h // 4:y2 - h // 4, x1 + w // 4:x2 - w // 4] / 1000.0
         valid = z[(z > DEPTH_MIN) & (z < DEPTH_MAX)]
@@ -135,16 +140,36 @@ class AmrCam(Node):
         pt = PointStamped()
         pt.point.x, pt.point.y, pt.point.z = (u - cx) * z / fx, (v - cy) * z / fy, z
         pt = do_transform_point(pt, self.tf)
+        return pt.point.x, pt.point.y, z
 
-        target = RcCarTarget(distance=pt.point.x, offset=pt.point.y)
+    def locate(self, car, depth, stamp):
+        """RC카까지의 거리·좌우(base_link 기준)를 메시지로 만든다."""
+        position = self.box_position(car, depth)
+        if position is None:
+            return None
+        target = RcCarTarget(distance=position[0], offset=position[1])
         target.header.stamp = stamp
         target.header.frame_id = 'base_link'
 
         log = f'car conf={float(car.conf[0]):.2f} distance={target.distance:.2f} offset={target.offset:+.2f}'
         if self.car_height > 0:     # 박스 높이로 구한 카메라 기준 거리 (depth 값과 비교용)
-            log += f' | depth z={z:.2f} box z={fy * self.car_height / h:.2f}'
+            height = float(car.xyxy[0][3]) - float(car.xyxy[0][1])
+            log += f' | depth z={position[2]:.2f} box z={self.K[1, 1] * self.car_height / height:.2f}'
         self.get_logger().info(log, throttle_duration_sec=1.0)
         return target
+
+    def publish_dummies(self, boxes, depth, stamp):
+        """더미(car 가 아닌 것)의 위치를 장애물 점으로 낸다. 더미는 라이다보다 낮아 Nav2 가 스스로는 보지 못한다."""
+        points = []
+        for box in boxes:
+            position = None if int(box.cls[0]) == self.car_id else self.box_position(box, depth)
+            if position is None:
+                continue
+            x, y, z = position
+            half = (float(box.xyxy[0][2]) - float(box.xyxy[0][0])) * z / self.K[0, 0] / 2    # 박스 폭의 절반 (m)
+            points += [(x, y + dy, DUMMY_Z) for dy in np.linspace(-half, half, 5)]
+        if points:
+            self.dummy_pub.publish(point_cloud2.create_cloud_xyz32(Header(stamp=stamp, frame_id='base_link'), points))
 
     def show_debug(self, rgb, boxes, target, header):
         """박스와 거리를 그려 토픽으로 내고, show_window 면 창에도 띄운다."""

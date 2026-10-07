@@ -66,6 +66,8 @@ ros2 launch navi_pkg navi.launch.py
 | `nav2` | true | false 면 위치 추정·Nav2 를 띄우지 않는다 |
 | `rviz` | true | RViz |
 | `follow_sec` | 600.0 | 출발부터 이 시간이 지나면 스스로 복귀(초) |
+| `use_nav2` | true | 추종을 Nav2 에 맡긴다. RC카 위치를 지도 좌표의 목표로 주고 계속 갱신한다. 벽과 장애물을 피한다. false 면 속도 명령을 직접 보낸다(10/7 시연 방식, 장애물을 보지 않는다) |
+| `dummy` | true | AMR 캠이 본 더미(`/robot4/dummy_points`)를 Nav2 의 장애물로 넣는다. 더미는 라이다보다 낮아 Nav2 가 스스로는 보지 못한다 |
 
 ## 5. 터미널 2 — 비전
 

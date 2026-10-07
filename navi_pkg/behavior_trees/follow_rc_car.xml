@@ -1,0 +1,28 @@
+<!--
+  움직이는 목표(RC카)를 일정 거리에서 따라간다.
+  Nav2 의 follow_point.xml 을 바탕으로 두 값만 바꿨다:
+    - TruncatePath distance: 목표 0.8 m 앞에서 경로를 자른다 (= 유지 거리, follow_car.py 의 KEEP_DISTANCE 와 같게)
+    - RateController hz: 초당 2 번 다시 계획한다 (원본 1 번)
+  목표는 토픽 goal_update (geometry_msgs/PoseStamped, map 프레임)로 갱신한다.
+  스스로 끝나지 않으므로 취소(cancel)로 끝낸다.
+-->
+
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <PipelineSequence name="NavigateWithReplanning">
+      <ControllerSelector selected_controller="{selected_controller}" default_controller="FollowPath" topic_name="controller_selector"/>
+      <PlannerSelector selected_planner="{selected_planner}" default_planner="GridBased" topic_name="planner_selector"/>
+      <RateController hz="2.0">
+        <Sequence>
+          <GoalUpdater input_goal="{goal}" output_goal="{updated_goal}">
+            <ComputePathToPose goal="{updated_goal}" path="{path}" planner_id="{selected_planner}" error_code_id="{compute_path_error_code}"/>
+          </GoalUpdater>
+          <TruncatePath distance="0.8" input_path="{path}" output_path="{truncated_path}"/>
+        </Sequence>
+      </RateController>
+      <KeepRunningUntilFailure>
+        <FollowPath path="{truncated_path}" controller_id="{selected_controller}" error_code_id="{follow_path_error_code}"/>
+      </KeepRunningUntilFailure>
+    </PipelineSequence>
+  </BehaviorTree>
+</root>
