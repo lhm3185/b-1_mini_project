@@ -7,7 +7,7 @@
 두 노드 모두 검출 화면을 창으로 띄운다. 웹캠 노드는 AMR 의 응답을 받으면 스스로 끝난다.
 """
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -17,6 +17,8 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description():
     namespace = LaunchConfiguration('namespace')
     return LaunchDescription([
+        # navi.launch.py 와 같은 이유로 끈다 (노드끼리의 통신에는 필요 없다).
+        SetEnvironmentVariable('ROS_SUPER_CLIENT', 'False'),
         DeclareLaunchArgument('namespace', default_value='/robot4'),
         DeclareLaunchArgument('webcam', default_value='true', description='고정 웹캠 노드도 띄운다'),
         DeclareLaunchArgument('camera_index', default_value='2', description='고정 웹캠의 /dev/video 번호'),

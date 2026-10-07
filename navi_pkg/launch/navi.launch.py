@@ -11,7 +11,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -29,6 +29,9 @@ def generate_launch_description():
     namespace = LaunchConfiguration('namespace')
     nav2 = LaunchConfiguration('nav2')
     return LaunchDescription([
+        # 사람 터미널에서는 디스커버리 설정이 ROS_SUPER_CLIENT=True 가 된다. 노드 여럿이 한꺼번에 그렇게 뜨면
+        # 서로를 찾는 것이 느려져 Nav2 기동이 멈춘다(10/7 실측). 노드끼리의 통신에는 필요 없으므로 끈다.
+        SetEnvironmentVariable('ROS_SUPER_CLIENT', 'False'),
         DeclareLaunchArgument('namespace', default_value='/robot4'),
         DeclareLaunchArgument('map', default_value=os.path.expanduser('~/maps/my_map.yaml')),
         DeclareLaunchArgument('nav2', default_value='true', description='위치 추정과 Nav2 도 띄운다'),

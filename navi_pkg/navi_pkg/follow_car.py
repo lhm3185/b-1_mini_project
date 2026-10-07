@@ -150,7 +150,7 @@ class FollowCar:
                 self.navigator.info(f'{name} 대기 중 (상태: {state})')
                 logged = now
             if now - start > wait:
-                self.navigator.info(f'{name} 이(가) 켜지지 않아 다시 기동한다')
+                self.navigator.info(f'{name} 이(가) 켜지지 않아 다시 기동한다 (계속되면 런치를 내렸다 다시 띄운다)')
                 for command in (ManageLifecycleNodes.Request.RESET, ManageLifecycleNodes.Request.STARTUP):
                     future = manager_client.call_async(ManageLifecycleNodes.Request(command=command))
                     rclpy.spin_until_future_complete(self.navigator, future, timeout_sec=MANAGE_TIMEOUT)
