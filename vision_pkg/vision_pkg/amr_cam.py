@@ -162,7 +162,9 @@ class AmrCam(Node):
         """더미(car 가 아닌 것)의 위치를 장애물 점으로 낸다. 더미는 라이다보다 낮아 Nav2 가 스스로는 보지 못한다."""
         points = []
         for box in boxes:
-            position = None if int(box.cls[0]) == self.car_id else self.box_position(box, depth)
+            if int(box.cls[0]) == self.car_id or float(box.conf[0]) < self.conf:   # 기준 미달 박스는 장애물로 넣지 않는다
+                continue
+            position = self.box_position(box, depth)
             if position is None:
                 continue
             x, y, z = position

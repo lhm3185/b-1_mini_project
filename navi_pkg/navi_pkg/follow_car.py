@@ -53,7 +53,7 @@ class FollowCar:
     def __init__(self):
         self.navigator = TurtleBot4Navigator()
         declare = self.navigator.declare_parameter
-        # 로봇 중심 기준 (m). 0.64 m 보다 가까우면 깊이가 안 나온다. Nav2 추종은 follow_rc_car.xml 의 distance 도 같이 바꾼다
+        # 로봇 중심 기준 (m). 0.64 m 보다 가까우면 깊이가 안 나온다. Nav2 추종은 follow_rc_car.xml 의 distance(= 이 값 - 0.2)도 같이 바꾼다
         self.keep_distance = declare('keep_distance', 0.8).value
         self.use_nav2 = declare('use_nav2', True).value             # False 면 속도 명령을 직접 보내 따라간다(장애물을 보지 않는다)
         self.follow_sec = declare('follow_sec', 600.0).value        # 출발부터 이 시간이 지나면 복귀한다
