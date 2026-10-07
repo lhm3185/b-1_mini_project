@@ -50,6 +50,7 @@ ros2 service call /robot4/stop_follow std_srvs/srv/Trigger
 | | `rviz` | true | RViz |
 | | `follow_sec` | 600.0 | 출발부터 이 시간이 지나면 복귀(초) |
 | `vision.launch.py` | `webcam` | true | false 면 AMR 캠만 (웹캠이 다른 PC 에 있을 때) |
+| | `compressed_depth`, `best_effort` | true | AMR 캠이 압축 depth 를 BEST_EFFORT 로 받는다(Wi-Fi 가 붐빌 때 끊김 방지) |
 | | `camera_index` | 2 | 고정 웹캠의 `/dev/video` 번호 |
 | 공통 | `namespace` | `/robot4` | 로봇 네임스페이스 |
 

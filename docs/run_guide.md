@@ -75,7 +75,7 @@ ros2 launch vision_pkg vision.launch.py
 
 - **AMR 캠:** `amr_cam 시작: conf=0.85, ...` 다음에 `영상 없음 (도킹 중이면 카메라가 꺼져 있다)` 가 5 초마다 찍히면 정상이다. 로봇이 undock 하면 `영상 수신 중` 으로 바뀌고, 박스와 거리가 그려진 창("AMR Cam RC Car Detection")이 뜬다.
 - **고정 웹캠:** 창("Webcam RC Car Detection")이 뜨고 왼쪽 위에 `SEARCHING 0/3` 이 보인다.
-- **AMR 캠 영상이 끊길 때**(여러 사람이 같은 Wi-Fi 를 쓰면 `영상 없음` 이 자주 찍히고 추종을 놓친다): `compressed_depth:=true best_effort:=true` 를 붙인다. depth 를 압축된 것으로 받아 통신량이 1/4 쯤으로 줄고, 밀린 영상을 기다리지 않는다.
+- AMR 캠은 기본으로 **압축 depth 를 BEST_EFFORT 로** 받는다(시작 줄에 `best_effort=True, compressed_depth=True`). 무압축으로 받으면 여러 사람이 같은 Wi-Fi 를 쓸 때 수십 초씩 끊겨 추종을 놓쳤고, 이 설정으로는 182 초 동안 끊기지 않았다(10/7). 무압축으로 비교해 보려면 `compressed_depth:=false best_effort:=false`.
 - 웹캠 번호가 2 가 아니면 `camera_index:=<번호>`, 웹캠이 다른 PC 에 있으면 여기서는 `webcam:=false` 로 띄우고 그 PC 에서 `ros2 run vision_pkg webcam_node` 를 친다.
 - 웹캠 노드는 **응답을 한 번 받으면 스스로 끝난다.** 다시 시연하려면 이 터미널을 `Ctrl+C` 로 끄고 다시 띄운다.
 
@@ -120,7 +120,7 @@ ros2 action send_goal /robot4/dock irobot_create_msgs/action/Dock "{}"
 | 증상 | 원인 | 조치 |
 |---|---|---|
 | 세 번 울리지 않고 `위치 추정(amcl) 대기 중` 만 계속 찍힌다 | 위치 추정이 켜지지 않았다(Wi-Fi 로 노드들이 서로를 찾는 것이 느릴 때 생긴다). 30 초가 지나면 노드가 다시 기동을 시도한다 | 1 분 넘게 그대로면 터미널 1 을 끄고, 10 초쯤 뒤 다시 띄운다. **울리기 전에는 RC카를 웹캠에 넣지 않는다** |
-| 추종 중 AMR 캠에 `영상 없음` 이 찍히고 로봇이 놓친다 | Wi-Fi 가 붐벼 로봇 카메라 영상이 끊긴다(10/7: 13 초, 60 초씩 끊김) | 터미널 2 를 `compressed_depth:=true best_effort:=true` 로 다시 띄운다. 같은 Wi-Fi 를 쓰는 기기를 줄인다 |
+| 추종 중 AMR 캠에 `영상 없음` 이 찍히고 로봇이 놓친다 | Wi-Fi 가 붐벼 로봇 카메라 영상이 끊긴다 | 터미널 2 의 시작 줄이 `best_effort=True, compressed_depth=True` 인지 본다(아니면 예전 코드가 도는 것 — 터미널을 새로 연다). 같은 Wi-Fi 를 쓰는 기기를 줄인다 |
 | AMR 캠에 undock 뒤에도 계속 `영상 없음` | 로봇 카메라가 안 켜졌다 | `ros2 topic hz /robot4/oakd/stereo/image_raw` 로 약 10 Hz 가 나오는지 본다 |
 | AMR 캠에 `TF 대기 중` 만 찍힌다 | 런치가 아니라 `ros2 run` 으로 띄우면서 `/tf` 리매핑을 뺐다 | 런치로 띄운다 |
 | AMR 캠이 모델 파일을 못 찾는다 | `vision_pkg/models/amrcam_yolo26n.pt` 가 없다 | 2장대로 복사하고 다시 빌드 |
