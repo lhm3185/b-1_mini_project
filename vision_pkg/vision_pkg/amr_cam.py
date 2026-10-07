@@ -37,6 +37,8 @@ class AmrCam(Node):
         self.conf = self.declare_parameter('conf', 0.85).value
         self.car_height = self.declare_parameter('car_height', 0.0).value   # RC카 높이 (m), 0 이면 비교 로그 없음
         best_effort = self.declare_parameter('best_effort', False).value
+        # True 면 압축된 depth(PNG)를 받는다. 무압축의 1/4 쯤이라 Wi-Fi 가 붐빌 때 덜 끊긴다
+        self.compressed_depth = self.declare_parameter('compressed_depth', False).value
         self.show_window = self.declare_parameter('show_window', False).value   # 박스와 거리를 그린 영상을 창으로 띄운다
         model_path = self.declare_parameter('model_path', DEFAULT_MODEL_PATH).value
 
@@ -55,7 +57,10 @@ class AmrCam(Node):
 
         qos = qos_profile_sensor_data if best_effort else 10
         rgb_sub = Subscriber(self, CompressedImage, 'oakd/rgb/image_raw/compressed', qos_profile=qos)
-        depth_sub = Subscriber(self, Image, 'oakd/stereo/image_raw', qos_profile=qos)
+        if self.compressed_depth:
+            depth_sub = Subscriber(self, CompressedImage, 'oakd/stereo/image_raw/compressedDepth', qos_profile=qos)
+        else:
+            depth_sub = Subscriber(self, Image, 'oakd/stereo/image_raw', qos_profile=qos)
         self.sync = ApproximateTimeSynchronizer([rgb_sub, depth_sub], queue_size=10, slop=0.05)
         self.sync.registerCallback(self.on_pair)
         self.create_subscription(CameraInfo, 'oakd/rgb/camera_info', self.on_camera_info, 1)
@@ -63,7 +68,8 @@ class AmrCam(Node):
         self.debug_pub = self.create_publisher(CompressedImage, 'rc_car_debug/compressed', 1)
         self.target_pub = self.create_publisher(RcCarTarget, 'rc_car_target', 10)
         self.create_timer(0.1, self.process)
-        self.get_logger().info(f'amr_cam 시작: conf={self.conf}, model={model_path}')
+        self.get_logger().info(f'amr_cam 시작: conf={self.conf}, best_effort={best_effort}, '
+                               f'compressed_depth={self.compressed_depth}, model={model_path}')
 
     def on_pair(self, rgb_msg, depth_msg):
         self.pair = (rgb_msg, depth_msg)
@@ -94,7 +100,10 @@ class AmrCam(Node):
                 return
 
         rgb = cv2.imdecode(np.frombuffer(rgb_msg.data, np.uint8), cv2.IMREAD_COLOR)
-        depth = np.frombuffer(depth_msg.data, np.uint16).reshape(depth_msg.height, depth_msg.width)   # 16UC1, mm
+        if self.compressed_depth:    # 앞 12 바이트는 압축 설정, 그 뒤가 16 비트 PNG
+            depth = cv2.imdecode(np.frombuffer(depth_msg.data, np.uint8)[12:], cv2.IMREAD_UNCHANGED)
+        else:
+            depth = np.frombuffer(depth_msg.data, np.uint16).reshape(depth_msg.height, depth_msg.width)   # 16UC1, mm
 
         boxes = self.model.predict(rgb, conf=LOW_CONF, verbose=False)[0].boxes
         car = None      # 기준을 넘는 car 중 신뢰도가 가장 높은 박스

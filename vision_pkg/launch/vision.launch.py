@@ -3,6 +3,7 @@
   ros2 launch vision_pkg vision.launch.py
   ros2 launch vision_pkg vision.launch.py webcam:=false          # 웹캠이 다른 PC 에 있을 때
   ros2 launch vision_pkg vision.launch.py camera_index:=0
+  ros2 launch vision_pkg vision.launch.py compressed_depth:=true best_effort:=true   # AMR 캠 영상이 끊길 때
 
 두 노드 모두 검출 화면을 창으로 띄운다. 웹캠 노드는 AMR 의 응답을 받으면 스스로 끝난다.
 """
@@ -22,9 +23,15 @@ def generate_launch_description():
         DeclareLaunchArgument('namespace', default_value='/robot4'),
         DeclareLaunchArgument('webcam', default_value='true', description='고정 웹캠 노드도 띄운다'),
         DeclareLaunchArgument('camera_index', default_value='2', description='고정 웹캠의 /dev/video 번호'),
+        DeclareLaunchArgument('compressed_depth', default_value='false', description='AMR 캠이 압축 depth 를 받는다'),
+        DeclareLaunchArgument('best_effort', default_value='false', description='AMR 캠 영상 구독을 BEST_EFFORT 로'),
         Node(
             package='vision_pkg', executable='amr_cam', namespace=namespace, output='screen',
-            parameters=[{'show_window': True}],
+            parameters=[{
+                'show_window': True,
+                'compressed_depth': ParameterValue(LaunchConfiguration('compressed_depth'), value_type=bool),
+                'best_effort': ParameterValue(LaunchConfiguration('best_effort'), value_type=bool),
+            }],
             # 로봇의 TF 는 /robot4/tf 로 나온다. 이 리매핑이 없으면 base_link 를 찾지 못한다.
             remappings=[('/tf', [namespace, '/tf']), ('/tf_static', [namespace, '/tf_static'])],
         ),
