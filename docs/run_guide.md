@@ -24,16 +24,18 @@ RC카가 고정 웹캠에 보이면 AMR 이 출발해 RC카를 찾아 따라가�
 
 ## 2. 코드 받기와 빌드 (처음 한 번)
 
+저장소 폴더를 그대로 colcon 워크스페이스로 쓴다(빌드 결과 `build/ install/ log/` 는 `.gitignore` 에 있다).
+
 ```bash
-mkdir -p ~/amr_cam_test_ws/src && cd ~/amr_cam_test_ws/src
 git clone -b feature/rc_car_follow https://github.com/lhm3185/b-1_mini_project.git
-cp <amrcam_yolo26n.pt 가 있는 곳>/amrcam_yolo26n.pt b-1_mini_project/vision_pkg/models/
-cd ~/amr_cam_test_ws
+cd b-1_mini_project
+cp <amrcam_yolo26n.pt 가 있는 곳>/amrcam_yolo26n.pt vision_pkg/models/
 colcon build --symlink-install
 ```
 
-이미 받아 둔 폴더면 `git pull` 뒤 다시 빌드한다. `which colcon` 이 `~/venvs/rokey_venv/...` 여야 한다(시스템 colcon 으로 빌드하면 노드가 venv 의 ultralytics 를 찾지 못한다).
-한 폴더에서 `--symlink-install` 을 쓰는 빌드와 안 쓰는 빌드를 섞으면 `interface_pkg` 빌드가 실패한다. 그때는 `build/interface_pkg` 와 `install/interface_pkg` 를 지우고 다시 빌드한다.
+- GPU PC 1(MSI)에는 `~/rokey_ws/mini_ws/b-1_mini_project` 에 받아 빌드해 두었다. 아래에서 `<작업 폴더>` 는 이 경로다.
+- 이미 받아 둔 폴더면 `git pull` 뒤 다시 빌드한다. `which colcon` 이 `~/venvs/rokey_venv/...` 여야 한다(시스템 colcon 으로 빌드하면 노드가 venv 의 ultralytics 를 찾지 못한다).
+- 한 폴더에서 `--symlink-install` 을 쓰는 빌드와 안 쓰는 빌드를 섞으면 `interface_pkg` 빌드가 실패한다. 그때는 `build/ install/ log/` 를 지우고 다시 빌드한다.
 
 ## 3. 터미널마다 먼저 칠 것
 
@@ -42,7 +44,7 @@ source ~/venvs/rokey_venv/bin/activate
 source /opt/ros/jazzy/setup.bash
 source ~/turtlebot4_ws/install/setup.bash
 source /etc/turtlebot4_discovery/setup.bash
-source ~/amr_cam_test_ws/install/setup.bash     # 반드시 마지막에
+source <작업 폴더>/install/setup.bash     # 반드시 마지막에. MSI: ~/rokey_ws/mini_ws/b-1_mini_project/install/setup.bash
 ```
 
 `.bashrc` 가 앞의 네 줄을 이미 하고 있으면 마지막 줄만 치면 된다. 마지막 줄이 맨 뒤에 와야 한다(다른 워크스페이스의 옛 `interface_pkg` 가 먼저 잡히면 타입이 맞지 않는다).
@@ -73,6 +75,7 @@ ros2 launch vision_pkg vision.launch.py
 
 - **AMR 캠:** `amr_cam 시작: conf=0.85, ...` 다음에 `영상 없음 (도킹 중이면 카메라가 꺼져 있다)` 가 5 초마다 찍히면 정상이다. 로봇이 undock 하면 `영상 수신 중` 으로 바뀌고, 박스와 거리가 그려진 창("AMR Cam RC Car Detection")이 뜬다.
 - **고정 웹캠:** 창("Webcam RC Car Detection")이 뜨고 왼쪽 위에 `SEARCHING 0/3` 이 보인다.
+- **AMR 캠 영상이 끊길 때**(여러 사람이 같은 Wi-Fi 를 쓰면 `영상 없음` 이 자주 찍히고 추종을 놓친다): `compressed_depth:=true best_effort:=true` 를 붙인다. depth 를 압축된 것으로 받아 통신량이 1/4 쯤으로 줄고, 밀린 영상을 기다리지 않는다.
 - 웹캠 번호가 2 가 아니면 `camera_index:=<번호>`, 웹캠이 다른 PC 에 있으면 여기서는 `webcam:=false` 로 띄우고 그 PC 에서 `ros2 run vision_pkg webcam_node` 를 친다.
 - 웹캠 노드는 **응답을 한 번 받으면 스스로 끝난다.** 다시 시연하려면 이 터미널을 `Ctrl+C` 로 끄고 다시 띄운다.
 
@@ -117,7 +120,8 @@ ros2 action send_goal /robot4/dock irobot_create_msgs/action/Dock "{}"
 | 증상 | 원인 | 조치 |
 |---|---|---|
 | 세 번 울리지 않고 `위치 추정(amcl) 대기 중` 만 계속 찍힌다 | 위치 추정이 켜지지 않았다(Wi-Fi 로 노드들이 서로를 찾는 것이 느릴 때 생긴다). 30 초가 지나면 노드가 다시 기동을 시도한다 | 1 분 넘게 그대로면 터미널 1 을 끄고, 10 초쯤 뒤 다시 띄운다. **울리기 전에는 RC카를 웹캠에 넣지 않는다** |
-| AMR 캠에 undock 뒤에도 `영상 없음` | 로봇 카메라가 안 켜졌거나 Wi-Fi 문제 | `ros2 topic hz /robot4/oakd/stereo/image_raw` 로 약 10 Hz 가 나오는지 본다 |
+| 추종 중 AMR 캠에 `영상 없음` 이 찍히고 로봇이 놓친다 | Wi-Fi 가 붐벼 로봇 카메라 영상이 끊긴다(10/7: 13 초, 60 초씩 끊김) | 터미널 2 를 `compressed_depth:=true best_effort:=true` 로 다시 띄운다. 같은 Wi-Fi 를 쓰는 기기를 줄인다 |
+| AMR 캠에 undock 뒤에도 계속 `영상 없음` | 로봇 카메라가 안 켜졌다 | `ros2 topic hz /robot4/oakd/stereo/image_raw` 로 약 10 Hz 가 나오는지 본다 |
 | AMR 캠에 `TF 대기 중` 만 찍힌다 | 런치가 아니라 `ros2 run` 으로 띄우면서 `/tf` 리매핑을 뺐다 | 런치로 띄운다 |
 | AMR 캠이 모델 파일을 못 찾는다 | `vision_pkg/models/amrcam_yolo26n.pt` 가 없다 | 2장대로 복사하고 다시 빌드 |
 | 터미널 1 에 `Failed to bring up all requested nodes` 가 찍힌다 | 도킹 중에는 라이다가 꺼져 있어 Nav2 가 60 초 기다리다 기동을 포기한다 | 정상이다. 출발해 undock 하면 주행 노드가 `Nav2 가 꺼져 있어 다시 기동한다` 를 찍고 다시 켠다(5 초 기다린 뒤 약 7 초) |
