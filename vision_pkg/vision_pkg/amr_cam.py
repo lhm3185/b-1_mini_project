@@ -1,6 +1,8 @@
 """AMR 카메라(OAK-D)로 RC카를 찾고, depth 로 거리·방향을 계산해 rc_car_target 토픽으로 보낸다.
 
-실행 (TF 리매핑이 없으면 base_link 를 찾지 못한다):
+실행 (웹캠 노드와 함께):
+  ros2 launch vision_pkg vision.launch.py
+노드만 (TF 리매핑이 없으면 base_link 를 찾지 못한다):
   ros2 run vision_pkg amr_cam --ros-args -r __ns:=/robot4 \
     -r /tf:=/robot4/tf -r /tf_static:=/robot4/tf_static
 
@@ -35,6 +37,7 @@ class AmrCam(Node):
         self.conf = self.declare_parameter('conf', 0.85).value
         self.car_height = self.declare_parameter('car_height', 0.0).value   # RC카 높이 (m), 0 이면 비교 로그 없음
         best_effort = self.declare_parameter('best_effort', False).value
+        self.show_window = self.declare_parameter('show_window', False).value   # 박스와 거리를 그린 영상을 창으로 띄운다
         model_path = self.declare_parameter('model_path', DEFAULT_MODEL_PATH).value
 
         self.model = YOLO(model_path)
@@ -105,8 +108,8 @@ class AmrCam(Node):
         target = self.locate(car, depth, rgb_msg.header.stamp) if car is not None else None
         if target is not None:      # 보일 때만 보낸다. 안 보내면 받는 쪽이 놓친 것으로 본다
             self.target_pub.publish(target)
-        if self.debug_pub.get_subscription_count() > 0:
-            self.publish_debug(rgb, boxes, target, rgb_msg.header)
+        if self.show_window or self.debug_pub.get_subscription_count() > 0:
+            self.show_debug(rgb, boxes, target, rgb_msg.header)
 
     def locate(self, car, depth, stamp):
         """박스 가운데 50% 영역의 깊이 중앙값으로 base_link 기준 거리·좌우를 구한다."""
@@ -134,7 +137,8 @@ class AmrCam(Node):
         self.get_logger().info(log, throttle_duration_sec=1.0)
         return target
 
-    def publish_debug(self, rgb, boxes, target, header):
+    def show_debug(self, rgb, boxes, target, header):
+        """박스와 거리를 그려 토픽으로 내고, show_window 면 창에도 띄운다."""
         for box in boxes:
             x1, y1, x2, y2 = (int(v) for v in box.xyxy[0])
             is_car = int(box.cls[0]) == self.car_id
@@ -148,6 +152,9 @@ class AmrCam(Node):
         msg = CompressedImage(header=header, format='jpeg')
         msg.data = cv2.imencode('.jpg', rgb)[1].tobytes()
         self.debug_pub.publish(msg)
+        if self.show_window:
+            cv2.imshow('AMR Cam RC Car Detection', rgb)
+            cv2.waitKey(1)
 
 
 def main():

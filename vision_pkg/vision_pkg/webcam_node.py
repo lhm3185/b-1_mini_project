@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import time
 from pathlib import Path
 
 import cv2
@@ -123,7 +122,7 @@ class WebcamNode(Node):
 
         # 서비스 요청 상태
         self.request_future = None
-        self.request_started_at = None
+        self.request_sent = False
         self.request_completed = False
 
         self.running = True
@@ -134,8 +133,8 @@ class WebcamNode(Node):
             self.camera_callback,
         )
 
-        # 서비스 미응답 시 재시도 주기: 1초
-        self.retry_timer = self.create_timer(
+        # 서비스 서버가 준비될 때까지 확인하는 주기: 1초
+        self.service_wait_timer = self.create_timer(
             1.0,
             self.try_send_request,
         )
@@ -225,33 +224,8 @@ class WebcamNode(Node):
         if not self.detection_confirmed:
             return
 
-        if self.request_completed:
+        if self.request_sent:
             return
-
-        # 이전 요청이 아직 처리 중인지 확인합니다.
-        if self.request_future is not None:
-            if self.request_future.done():
-                return
-
-            elapsed = (
-                time.monotonic()
-                - self.request_started_at
-            )
-
-            # 요청 후 1초가 지나지 않았다면 기다립니다.
-            if elapsed < 1.0:
-                return
-
-            # 1초 동안 응답이 없으면 기존 요청을 취소하고
-            # 다시 요청할 수 있도록 초기화합니다.
-            old_future = self.request_future
-            self.request_future = None
-            self.request_started_at = None
-            old_future.cancel()
-
-            self.get_logger().warning(
-                '서비스 응답이 없어 다시 시도합니다.'
-            )
 
         # AMR의 서비스 서버가 아직 실행되지 않은 경우
         if not self.detected_client.service_is_ready():
@@ -270,17 +244,26 @@ class WebcamNode(Node):
             'AMR에 RC카 검출 요청을 보냅니다.'
         )
 
-        self.request_started_at = time.monotonic()
-        self.request_future = (
-            self.detected_client.call_async(request)
-        )
+        self.request_sent = True
+        try:
+            self.request_future = self.detected_client.call_async(request)
+        except Exception as exc:
+            self.get_logger().error(
+                f'서비스 요청 전송 실패. 재전송하지 않습니다: {exc}'
+            )
+            self.running = False
+            return
+
         self.request_future.add_done_callback(
             self.on_detection_response
         )
 
     def on_detection_response(self, future):
-        # timeout으로 취소한 이전 요청의 콜백이면 무시합니다.
         if future.cancelled():
+            self.get_logger().error(
+                '서비스 요청이 취소되었습니다. 재전송하지 않습니다.'
+            )
+            self.running = False
             return
 
         if future is not self.request_future:
@@ -290,14 +273,11 @@ class WebcamNode(Node):
             response = future.result()
         except Exception as exc:
             self.get_logger().error(
-                f'서비스 요청 실패: {exc}'
+                f'서비스 응답 처리 실패. 재전송하지 않습니다: {exc}'
             )
-            self.request_future = None
-            self.request_started_at = None
+            self.running = False
             return
 
-        self.request_future = None
-        self.request_started_at = None
         self.request_completed = True
 
         if response.started:
@@ -311,8 +291,6 @@ class WebcamNode(Node):
                 '동작을 시작하지 않았습니다.'
             )
 
-        # 인터페이스 정의상 응답을 받으면
-        # 같은 요청을 다시 보내지 않습니다.
         self.running = False
 
     def show_result(self, result):
