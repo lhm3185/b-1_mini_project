@@ -37,6 +37,8 @@ MAX_ANGULAR_SPEED = 0.5     # 최대 회전 속도 (rad/s)
 LINEAR_GAIN = 0.6
 ANGULAR_GAIN = 0.6
 NAV2_WAIT = 5.0             # 초기 위치를 준 뒤 Nav2 가 이 시간 안에 켜지지 않으면 다시 기동한다 (초). 정상 기동에 4 초쯤 걸린다
+LOCALIZATION_WAIT = 30.0    # 런치 뒤 위치 추정(amcl)이 이 시간 안에 켜지지 않으면 다시 기동한다 (초)
+MANAGE_TIMEOUT = 30.0       # 다시 기동 요청의 응답을 기다리는 한도 (초)
 
 
 class FollowCar:
@@ -62,9 +64,11 @@ class FollowCar:
         self.navigator.create_subscription(RcCarTarget, 'rc_car_target', self.on_target, 10)
         self.navigator.create_service(WebcamDetection, 'rc_car_detected', self.on_detected)
         self.navigator.create_service(Trigger, 'stop_follow', self.on_stop)
-        self.nav2_state = self.navigator.create_client(GetState, 'bt_navigator/get_state')
-        self.nav2_manager = self.navigator.create_client(
-            ManageLifecycleNodes, 'lifecycle_manager_navigation/manage_nodes')
+        client = self.navigator.create_client
+        self.amcl_state = client(GetState, 'amcl/get_state')
+        self.amcl_manager = client(ManageLifecycleNodes, 'lifecycle_manager_localization/manage_nodes')
+        self.nav2_state = client(GetState, 'bt_navigator/get_state')
+        self.nav2_manager = client(ManageLifecycleNodes, 'lifecycle_manager_navigation/manage_nodes')
         self.navigator.create_timer(1.0, lambda: self.state_pub.publish(AmrState(state=self.state)))
 
     def on_detected(self, request, response):
@@ -126,30 +130,32 @@ class FollowCar:
         initial_pose = self.navigator.getPoseStamped([0.0, 0.0], TurtleBot4Directions.SOUTH)
         self.navigator.setInitialPose(initial_pose)
         self.navigator.info('0.0, 0.0 초기 포즈 설정 완료')
-        self.start_nav2()
-
-    def nav2_active(self):
-        future = self.nav2_state.call_async(GetState.Request())
-        rclpy.spin_until_future_complete(self.navigator, future, timeout_sec=2.0)
-        return future.done() and future.result() is not None and future.result().current_state.label == 'active'
-
-    def start_nav2(self):
-        """Nav2 가 켜질 때까지 기다린다. 포기한 상태면 다시 기동시킨다.
-
-        도킹 중에는 절전으로 라이다가 꺼져 있어 지도 위 위치(map TF)가 나오지 않는다.
-        Nav2 는 그 위치를 60 초 기다리다 기동을 포기하므로, undock 하고 초기 위치를 준 지금 다시 켠다.
-        """
         self.navigator.waitUntilNav2Active(navigator='amcl')    # 위치 추정이 초기 위치를 받을 때까지
-        start = time.monotonic()
-        while rclpy.ok() and not self.nav2_active():
-            if time.monotonic() - start > NAV2_WAIT:
-                self.navigator.info('Nav2 가 꺼져 있어 다시 기동한다')
+        # 도킹 중에는 절전으로 라이다가 꺼져 지도 위 위치(map TF)가 나오지 않는다. Nav2 는 그 위치를
+        # 60 초 기다리다 기동을 포기하므로, undock 하고 초기 위치를 준 지금 다시 켠다.
+        self.wait_active('Nav2', self.nav2_state, self.nav2_manager, NAV2_WAIT)
+
+    def wait_active(self, name, state_client, manager_client, wait):
+        """Nav2 쪽 노드가 active 가 될 때까지 기다린다. wait 초가 지나면 그 묶음을 다시 기동시킨다."""
+        start = logged = time.monotonic()
+        while rclpy.ok():
+            future = state_client.call_async(GetState.Request())
+            rclpy.spin_until_future_complete(self.navigator, future, timeout_sec=2.0)
+            state = future.result().current_state.label if future.done() and future.result() else '응답 없음'
+            if state == 'active':
+                self.navigator.info(f'{name} 준비 완료')
+                return
+            now = time.monotonic()
+            if now - logged > 3.0:
+                self.navigator.info(f'{name} 대기 중 (상태: {state})')
+                logged = now
+            if now - start > wait:
+                self.navigator.info(f'{name} 이(가) 켜지지 않아 다시 기동한다')
                 for command in (ManageLifecycleNodes.Request.RESET, ManageLifecycleNodes.Request.STARTUP):
-                    future = self.nav2_manager.call_async(ManageLifecycleNodes.Request(command=command))
-                    rclpy.spin_until_future_complete(self.navigator, future)
+                    future = manager_client.call_async(ManageLifecycleNodes.Request(command=command))
+                    rclpy.spin_until_future_complete(self.navigator, future, timeout_sec=MANAGE_TIMEOUT)
                 start = time.monotonic()
             rclpy.spin_once(self.navigator, timeout_sec=0.5)
-        self.navigator.info('Nav2 준비 완료')
 
     def detecting_motion(self, angular_speed=SCAN_SPEED):
         """RC카 타깃 메시지를 받을 때까지 회전하며 탐색한다. 찾으면 True."""
@@ -217,6 +223,7 @@ def main():
     follow_car = FollowCar()
     try:
         while rclpy.ok():       # 한 번 끝나면 다음 출발 신호를 다시 기다린다
+            follow_car.wait_active('위치 추정(amcl)', follow_car.amcl_state, follow_car.amcl_manager, LOCALIZATION_WAIT)
             follow_car.wait_ready_beep()
             follow_car.navigator.info('웹캠 검출 신호 대기 (서비스 rc_car_detected)')
             while rclpy.ok() and not follow_car.start_requested:
