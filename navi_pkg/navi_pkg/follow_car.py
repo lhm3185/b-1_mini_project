@@ -36,7 +36,7 @@ MAX_LINEAR_SPEED = 0.2      # 최대 전진 속도 (m/s). 후진은 하지 않�
 MAX_ANGULAR_SPEED = 0.5     # 최대 회전 속도 (rad/s)
 LINEAR_GAIN = 0.6
 ANGULAR_GAIN = 0.6
-NAV2_RETRY = 20.0           # 다시 기동시킨 Nav2 가 이 시간 안에 켜지지 않으면 한 번 더 기동한다 (초)
+NAV2_WAIT = 5.0             # 초기 위치를 준 뒤 Nav2 가 이 시간 안에 켜지지 않으면 다시 기동한다 (초). 정상 기동에 4 초쯤 걸린다
 
 
 class FollowCar:
@@ -63,7 +63,6 @@ class FollowCar:
         self.navigator.create_service(WebcamDetection, 'rc_car_detected', self.on_detected)
         self.navigator.create_service(Trigger, 'stop_follow', self.on_stop)
         self.nav2_state = self.navigator.create_client(GetState, 'bt_navigator/get_state')
-        self.planner_state = self.navigator.create_client(GetState, 'planner_server/get_state')
         self.nav2_manager = self.navigator.create_client(
             ManageLifecycleNodes, 'lifecycle_manager_navigation/manage_nodes')
         self.navigator.create_timer(1.0, lambda: self.state_pub.publish(AmrState(state=self.state)))
@@ -102,7 +101,11 @@ class FollowCar:
         start = time.monotonic()
         while rclpy.ok() and self.audio_pub.get_subscription_count() == 0 and time.monotonic() - start < 10.0:
             rclpy.spin_once(self.navigator, timeout_sec=0.1)
-        self.beep(880, 0, 880, 0, 880)      # 0 Hz 는 쉼표
+        for _ in range(3):      # 한 음씩 따로 보내 세 번 울린다
+            self.beep(880)
+            end = time.monotonic() + 0.4
+            while rclpy.ok() and time.monotonic() < end:
+                rclpy.spin_once(self.navigator, timeout_sec=0.05)
 
     def set_state(self, state):
         self.state = state
@@ -125,29 +128,26 @@ class FollowCar:
         self.navigator.info('0.0, 0.0 초기 포즈 설정 완료')
         self.start_nav2()
 
-    def lifecycle_state(self, client):
-        """Nav2 노드의 상태 이름('active', 'inactive' 등). 답이 없으면 None."""
-        future = client.call_async(GetState.Request())
+    def nav2_active(self):
+        future = self.nav2_state.call_async(GetState.Request())
         rclpy.spin_until_future_complete(self.navigator, future, timeout_sec=2.0)
-        return future.result().current_state.label if future.done() and future.result() else None
+        return future.done() and future.result() is not None and future.result().current_state.label == 'active'
 
     def start_nav2(self):
-        """Nav2 가 켜질 때까지 기다린다. 기동을 포기한 상태면 바로 다시 기동시킨다.
+        """Nav2 가 켜질 때까지 기다린다. 포기한 상태면 다시 기동시킨다.
 
         도킹 중에는 절전으로 라이다가 꺼져 있어 지도 위 위치(map TF)가 나오지 않는다.
-        Nav2 는 그 위치를 60 초 기다리다 planner_server 를 켜지 못한 채(inactive) 기동을 포기하므로,
-        undock 하고 초기 위치를 준 지금 다시 켠다. 기동 중(activating)이면 건드리지 않고 기다린다.
+        Nav2 는 그 위치를 60 초 기다리다 기동을 포기하므로, undock 하고 초기 위치를 준 지금 다시 켠다.
         """
         self.navigator.waitUntilNav2Active(navigator='amcl')    # 위치 추정이 초기 위치를 받을 때까지
-        restarted = None
-        while rclpy.ok() and self.lifecycle_state(self.nav2_state) != 'active':
-            gave_up = self.lifecycle_state(self.planner_state) == 'inactive'
-            if gave_up and (restarted is None or time.monotonic() - restarted > NAV2_RETRY):
+        start = time.monotonic()
+        while rclpy.ok() and not self.nav2_active():
+            if time.monotonic() - start > NAV2_WAIT:
                 self.navigator.info('Nav2 가 꺼져 있어 다시 기동한다')
                 for command in (ManageLifecycleNodes.Request.RESET, ManageLifecycleNodes.Request.STARTUP):
                     future = self.nav2_manager.call_async(ManageLifecycleNodes.Request(command=command))
                     rclpy.spin_until_future_complete(self.navigator, future)
-                restarted = time.monotonic()
+                start = time.monotonic()
             rclpy.spin_once(self.navigator, timeout_sec=0.5)
         self.navigator.info('Nav2 준비 완료')
 
